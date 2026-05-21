@@ -15,6 +15,8 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
+_SEVERITY_RANK = {"LOW": 1, "MEDIUM": 2, "HIGH": 3, "CRITICAL": 4}
+
 _SEVERITY_PRIORITY = {
     "LOW": Priority.NORMAL,
     "MEDIUM": Priority.HIGH,
@@ -143,7 +145,7 @@ class ThreatAssessNode(BaseNode):
         if not matched:
             return
 
-        max_severity = max(m["severity"] for m in matched)
+        max_severity = max(matched, key=lambda m: _SEVERITY_RANK.get(m["severity"], 0))["severity"]
         out_priority = _SEVERITY_PRIORITY.get(max_severity, Priority.NORMAL)
 
         out = packet.relay(

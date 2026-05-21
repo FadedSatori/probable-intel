@@ -27,16 +27,17 @@ class EntityExtractorNode(BaseNode):
         self._confidence_min: float = 0.0
 
     async def setup(self) -> None:
-        import spacy
-
-        model = _SPACY_MODEL
         try:
-            self._nlp = spacy.load(model)
+            import spacy
+            self._nlp = spacy.load(_SPACY_MODEL)
+        except ImportError:
+            log.warning("spaCy not installed; EntityExtractorNode will pass packets through unchanged")
+            self._nlp = None
         except OSError:
             log.warning(
-                "spaCy model %r not found; run: python -m spacy download %s",
-                model,
-                model,
+                "spaCy model %r not found; run: python -m spacy download %s  "
+                "-- node will pass packets through unchanged until model is available",
+                _SPACY_MODEL, _SPACY_MODEL,
             )
             self._nlp = None
 
@@ -71,7 +72,17 @@ class EntityExtractorNode(BaseNode):
 
     async def _process(self, packet: IntelPacket) -> None:
         text = packet.payload.get("content") or packet.payload.get("body", "")
-        if not text or not self._nlp:
+        if not text:
+            return
+
+        # Graceful degradation: relay packet unchanged if model unavailable
+        if not self._nlp:
+            if self._emit_channel:
+                await self.emit(self._emit_channel, packet.relay(
+                    self.node_id, self._emit_channel,
+                    packet_type="EntityPacket",
+                    payload={**packet.payload, "entities": [], "entity_count": 0},
+                ))
             return
 
         doc = self._nlp(text[:100_000])

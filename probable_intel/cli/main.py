@@ -132,5 +132,105 @@ def status(
     }, indent=2))
 
 
+_PRIORITY_COLORS = {
+    "LOW": "\033[90m",       # dark grey
+    "NORMAL": "\033[36m",    # cyan
+    "HIGH": "\033[33m",      # yellow
+    "CRITICAL": "\033[91m",  # bright red
+}
+_RESET = "\033[0m"
+
+
+@app.command()
+def watch(
+    apparatus: Path = typer.Argument(..., help="Path to .nx apparatus file"),
+    channel: str = typer.Option("", "--channel", "-c", help="Specific channel to watch (default: all)"),
+    log_level: str = typer.Option("WARNING", "--log-level", "-l"),
+    raw: bool = typer.Option(False, "--raw", help="Print raw JSON (no color)"),
+) -> None:
+    """Watch IntelPackets flow through the Spine in real-time.
+
+    Loads the apparatus, starts all nodes, then prints every packet that
+    flows through the specified channel (or all channels if none given).
+    """
+    _setup_logging(log_level)
+    from ..hub.hub import Hub
+
+    hub = Hub()
+    try:
+        spec = hub.load_apparatus(apparatus)
+    except Exception as e:
+        typer.echo(f"[ERROR] {e}", err=True)
+        raise typer.Exit(1)
+
+    # Determine channels to watch
+    watch_channels = [channel] if channel else list(spec.emitting_channels())
+    if not watch_channels:
+        typer.echo("[WARN] no emitting channels found in apparatus", err=True)
+        raise typer.Exit(1)
+
+    typer.echo(
+        f"[pi watch] apparatus={spec.name!r}  watching {len(watch_channels)} channel(s)",
+        err=True,
+    )
+    for ch in watch_channels:
+        typer.echo(f"  → {ch}", err=True)
+    typer.echo("", err=True)
+
+    async def _watch() -> None:
+        subscriptions = [(ch, hub.spine.subscribe(ch)) for ch in watch_channels]
+        hub_task = asyncio.create_task(hub.run())
+
+        async def _drain(ch: str, sub: object) -> None:
+            async for packet in sub:  # type: ignore[union-attr]
+                _print_packet(ch, packet, raw)
+
+        drain_tasks = [asyncio.create_task(_drain(ch, sub)) for ch, sub in subscriptions]
+
+        try:
+            await asyncio.gather(*drain_tasks)
+        except asyncio.CancelledError:
+            pass
+        finally:
+            hub_task.cancel()
+            await asyncio.gather(hub_task, return_exceptions=True)
+
+    try:
+        asyncio.run(_watch())
+    except KeyboardInterrupt:
+        typer.echo("\n[pi watch] stopped", err=True)
+
+
+def _print_packet(channel: str, packet: object, raw: bool) -> None:
+    from ..spine.packet import IntelPacket
+    p: IntelPacket = packet  # type: ignore[assignment]
+
+    data = {
+        "channel": channel,
+        "packet_id": str(p.packet_id)[:8],
+        "type": p.packet_type,
+        "from": p.provenance[:2],
+        "priority": p.priority.name,
+        "confidence": round(p.confidence, 2),
+        "ts": p.timestamp_utc.strftime("%H:%M:%S"),
+        "payload_keys": list(p.payload.keys()),
+    }
+
+    if raw:
+        typer.echo(json.dumps(data))
+        return
+
+    color = _PRIORITY_COLORS.get(p.priority.name, "")
+    line = (
+        f"{color}[{data['ts']}] "
+        f"[{p.priority.name:8s}] "
+        f"{p.packet_type:24s} "
+        f"#{data['packet_id']}  "
+        f"{' → '.join(data['from'])}"
+        f"{_RESET}"
+    )
+    typer.echo(line)
+
+
 if __name__ == "__main__":
     app()
