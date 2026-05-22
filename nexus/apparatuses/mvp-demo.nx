@@ -1,0 +1,100 @@
+# NEXUS v1.0 — MVP demonstration apparatus
+# Collects from public cybersecurity news feeds, extracts entities, and stores results.
+# Format: YAML with NEXUS schema
+
+apparatus_name: "mvp-demo"
+version: 1.0
+description: "MVP pipeline: feed ingestion → sentiment + entity extraction → storage"
+trust_level: restricted
+owner: "probable-intel-ops"
+
+nodes:
+  - type: FeedNode
+    id: "feed.krebs-security"
+    targets:
+      - feed: "https://krebsonsecurity.com/feed/"
+      - feed: "https://feeds.feedburner.com/TheHackersNews"
+    schedule:
+      interval: "30m"
+      jitter: 120
+    filters:
+      keywords: ["breach", "vulnerability", "ransomware", "zero-day", "exploit", "CVE", "hack"]
+      min_word_count: 50
+    emit:
+      channel: "raw.feed.security"
+      priority: high
+
+  - type: SentimentNode
+    id: "analyst.sentiment.security"
+    subscribe:
+      channels: ["raw.feed.security"]
+    backend:
+      primary: "vader"
+      fallback: "llm"
+      llm_threshold: "0.4"
+    emit:
+      channel: "analysis.sentiment.security"
+      priority: normal
+
+  - type: EntityExtractorNode
+    id: "analyst.entities.security"
+    subscribe:
+      channels: ["raw.feed.security"]
+    emit:
+      channel: "analysis.entities.security"
+      priority: normal
+
+  - type: ThreatAssessNode
+    id: "analyst.threat.security"
+    subscribe:
+      channels: ["analysis.sentiment.security"]
+    rules:
+      - condition: "sentiment_score < -0.5"
+        severity: HIGH
+        label: "negative-security-signal"
+      - condition: "sentiment_score < -0.7"
+        severity: CRITICAL
+        label: "critical-threat-indicator"
+    emit:
+      channel: "threat.security"
+      priority: high
+
+  - type: AlertNode
+    id: "sentinel.alert.security"
+    subscribe:
+      channels: ["threat.security"]
+    emit:
+      channel: "sink.alerts"
+      priority: critical
+
+  - type: StorageNode
+    id: "archivist.storage.main"
+    subscribe:
+      channels: ["analysis.entities.security", "threat.security"]
+    emit:
+      channel: "sink.storage"
+      priority: low
+
+  - type: OpSecNode
+    id: "ci.opsec.main"
+    emit:
+      channel: "ci.opsec.events"
+      priority: normal
+
+  - type: DeceptionNode
+    id: "ci.deception.main"
+    honeypots:
+      - type: "fake_api_endpoint"
+        path: "/api/v1/internal/nodes"
+        canary_id: "honeypot-api-01"
+      - type: "fake_dashboard"
+        path: "/admin/status"
+        canary_id: "honeypot-dash-01"
+    emit:
+      channel: "ci.deception.triggers"
+      priority: critical
+
+storage:
+  primary:
+    backend: "sqlite"
+    path: "/tmp/probable-intel-demo.db"
