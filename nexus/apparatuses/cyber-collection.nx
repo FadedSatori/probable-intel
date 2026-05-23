@@ -127,10 +127,38 @@ nodes:
 
   # ── Sentinels ───────────────────────────────────────────────────────────────
 
+  - type: AnomalyNode
+    id: "anomaly.cyber-signals"
+    subscribe:
+      channels: ["analysis.sentiment.cyber", "raw.feed.cyber", "raw.api.cve", "raw.social.cyber"]
+    config:
+      window_seconds: 300
+      sentiment_window_size: 100
+      min_samples: 20
+    rules:
+      - condition: "volume_z_score > 3.0"
+        severity: HIGH
+        label: "packet-volume-spike"
+      - condition: "volume_z_score > 5.0"
+        severity: CRITICAL
+        label: "critical-volume-spike"
+      - condition: "sentiment_z_score < -2.5"
+        severity: HIGH
+        label: "sentiment-negativity-spike"
+      - condition: "sentiment_z_score < -4.0"
+        severity: CRITICAL
+        label: "critical-sentiment-collapse"
+      - condition: "sentiment_volatility > 0.4"
+        severity: MEDIUM
+        label: "sentiment-volatility-spike"
+    emit:
+      channel: "analysis.anomaly"
+      priority: high
+
   - type: AlertNode
     id: "sentinel.alert.cyber"
     subscribe:
-      channels: ["threat.cyber", "ci.deception.triggers", "ci.opsec.events"]
+      channels: ["threat.cyber", "analysis.anomaly", "ci.deception.triggers", "ci.opsec.events"]
     emit:
       channel: "sink.alerts"
       priority: critical

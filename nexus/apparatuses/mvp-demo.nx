@@ -59,10 +59,32 @@ nodes:
       channel: "threat.security"
       priority: high
 
+  - type: AnomalyNode
+    id: "anomaly.security-signals"
+    subscribe:
+      channels: ["analysis.sentiment.security", "raw.feed.security"]
+    config:
+      window_seconds: 300
+      sentiment_window_size: 100
+      min_samples: 10
+    rules:
+      - condition: "sentiment_z_score < -2.5"
+        severity: HIGH
+        label: "sentiment-negativity-spike"
+      - condition: "volume_z_score > 3.0"
+        severity: HIGH
+        label: "packet-volume-spike"
+      - condition: "sentiment_volatility > 0.4"
+        severity: MEDIUM
+        label: "sentiment-volatility-spike"
+    emit:
+      channel: "analysis.anomaly"
+      priority: high
+
   - type: AlertNode
     id: "sentinel.alert.security"
     subscribe:
-      channels: ["threat.security", "ci.deception.triggers", "ci.opsec.events"]
+      channels: ["threat.security", "analysis.anomaly", "ci.deception.triggers", "ci.opsec.events"]
     emit:
       channel: "sink.alerts"
       priority: critical

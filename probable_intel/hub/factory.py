@@ -19,6 +19,7 @@ def _lazy_imports() -> dict[str, type[BaseNode]]:
     from ..nodes.analysts.entity_node import EntityExtractorNode
     from ..nodes.analysts.threat_node import ThreatAssessNode
     from ..nodes.sentinels.alert_node import AlertNode
+    from ..nodes.sentinels.anomaly_node import AnomalyNode
     from ..nodes.archivists.storage_node import StorageNode
     from ..nodes.counterintel.opsec_node import OpSecNode
     from ..nodes.counterintel.deception_node import DeceptionNode
@@ -33,6 +34,7 @@ def _lazy_imports() -> dict[str, type[BaseNode]]:
         "EntityExtractorNode": EntityExtractorNode,
         "ThreatAssessNode": ThreatAssessNode,
         "AlertNode": AlertNode,
+        "AnomalyNode": AnomalyNode,
         "StorageNode": StorageNode,
         "OpSecNode": OpSecNode,
         "DeceptionNode": DeceptionNode,
