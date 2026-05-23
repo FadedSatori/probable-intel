@@ -62,7 +62,7 @@ nodes:
   - type: AlertNode
     id: "sentinel.alert.security"
     subscribe:
-      channels: ["threat.security"]
+      channels: ["threat.security", "ci.deception.triggers", "ci.opsec.events"]
     emit:
       channel: "sink.alerts"
       priority: critical
@@ -70,7 +70,7 @@ nodes:
   - type: StorageNode
     id: "archivist.storage.main"
     subscribe:
-      channels: ["analysis.entities.security", "threat.security"]
+      channels: ["analysis.entities.security", "analysis.sentiment.security", "threat.security"]
     emit:
       channel: "sink.storage"
       priority: low

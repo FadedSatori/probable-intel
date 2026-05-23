@@ -129,7 +129,10 @@ class NexusParser:
                 elif "url" in t:
                     spec.targets.append({"type": "web", "url": str(t["url"])})
                 elif "api" in t:
-                    spec.targets.append({"type": "api", "url": str(t["api"])})
+                    spec.targets.append({"type": "api", "url": str(t["api"]),
+                                         **{k: v for k, v in t.items() if k != "api"}})
+                elif "source" in t:
+                    spec.targets.append({"type": "social", **t})
 
         # subscribe
         sub = data.get("subscribe", {})

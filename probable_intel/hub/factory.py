@@ -13,6 +13,8 @@ if TYPE_CHECKING:
 def _lazy_imports() -> dict[str, type[BaseNode]]:
     from ..nodes.harvesters.feed_node import FeedNode
     from ..nodes.harvesters.web_node import WebNode
+    from ..nodes.harvesters.api_node import ApiNode
+    from ..nodes.harvesters.social_node import SocialNode
     from ..nodes.analysts.sentiment_node import SentimentNode
     from ..nodes.analysts.entity_node import EntityExtractorNode
     from ..nodes.analysts.threat_node import ThreatAssessNode
@@ -25,6 +27,8 @@ def _lazy_imports() -> dict[str, type[BaseNode]]:
     return {
         "FeedNode": FeedNode,
         "WebNode": WebNode,
+        "ApiNode": ApiNode,
+        "SocialNode": SocialNode,
         "SentimentNode": SentimentNode,
         "EntityExtractorNode": EntityExtractorNode,
         "ThreatAssessNode": ThreatAssessNode,
