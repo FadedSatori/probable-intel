@@ -26,6 +26,9 @@ class Hub:
         self._factory = NodeFactory()
         self._loader = NexusLoader()
         self._apparatuses: list[ApparatusSpec] = []
+        self._federation = None
+        self._active_directives: dict[str, dict] = {}
+        self._background_tasks: list[asyncio.Task] = []
 
     def load_apparatus(self, path: Path | str) -> ApparatusSpec:
         spec = self._loader.load(Path(path))
@@ -33,6 +36,15 @@ class Hub:
         for node_spec in spec.nodes:
             node = self._factory.create(node_spec, self.spine)
             self._registry.register(node)
+
+        # Wire KnowledgeGraphNode references into AttributionNodes
+        self._wire_kg_references()
+
+        # Start federation if configured
+        if spec.federation.enabled and not self._federation:
+            from .federation import FederatedSpine
+            self._federation = FederatedSpine(self.spine, spec.federation)
+
         log.info(
             "apparatus %r loaded: %d node(s) registered",
             spec.name,
@@ -40,10 +52,33 @@ class Hub:
         )
         return spec
 
+    def _wire_kg_references(self) -> None:
+        kg_nodes = {
+            n.node_id: n
+            for n in self._registry.all_nodes()
+            if n.__class__.__name__ == "KnowledgeGraphNode"
+        }
+        for node in self._registry.all_nodes():
+            if node.__class__.__name__ == "AttributionNode":
+                cfg = node.spec.config
+                kg_id = cfg.get("kg_node_id", "")
+                if kg_id and kg_id in kg_nodes:
+                    node._kg_node = kg_nodes[kg_id]  # type: ignore[attr-defined]
+                    log.debug("wired %s._kg_node → %s", node.node_id, kg_id)
+
     async def run(self) -> None:
         log.info("hub starting %d node(s)", len(self._registry.all_ids()))
         self._health.start()
         await self._lifecycle.start_all()
+
+        if self._federation is not None:
+            self._federation.start()
+            log.info("hub: federation started (%d peers)", len(self._federation._spec.peers))
+
+        self._background_tasks.append(
+            asyncio.create_task(self._directive_loop(), name="hub-directives")
+        )
+
         log.info("hub ready — all nodes running")
         try:
             await asyncio.Event().wait()  # run until cancelled
@@ -52,8 +87,49 @@ class Hub:
         finally:
             await self._shutdown()
 
+    async def _directive_loop(self) -> None:
+        """Apply TaskDirectivePackets from system.task.directives channel."""
+        sub = self.spine.subscribe("system.task.directives")
+        try:
+            while True:
+                packet = await sub.get()
+                await self._apply_directive(packet)
+        except asyncio.CancelledError:
+            pass
+        finally:
+            sub.close()
+
+    async def _apply_directive(self, packet) -> None:
+        payload = packet.payload
+        dtype = str(payload.get("directive_type", ""))
+        target_id = str(payload.get("target_node_id", ""))
+        params = payload.get("parameters", {})
+        ttl = int(payload.get("ttl_seconds", 3600))
+
+        log.info("hub: applying directive %r → %r (TTL %ds)", dtype, target_id, ttl)
+        self._active_directives[str(packet.packet_id)] = {**payload, "_applied_at": __import__("time").time()}
+
+        node = self._registry.get(target_id)
+        if node is None:
+            log.debug("hub: directive target %r not found (may use wildcard)", target_id)
+            return
+
+        try:
+            if dtype == "add_keyword_filter" and hasattr(node, "_keywords"):
+                kw = str(params.get("keyword", ""))
+                if kw:
+                    node._keywords.add(kw)  # type: ignore[attr-defined]
+                    log.info("hub: added keyword filter %r to %s", kw, target_id)
+        except Exception as e:
+            log.warning("hub: directive apply failed: %s", e)
+
     async def _shutdown(self) -> None:
         log.info("hub shutting down")
+        for t in self._background_tasks:
+            t.cancel()
+        await asyncio.gather(*self._background_tasks, return_exceptions=True)
+        if self._federation is not None:
+            await self._federation.stop()
         await self._health.stop()
         await self._lifecycle.stop_all()
         log.info("hub stopped")
@@ -62,4 +138,6 @@ class Hub:
         return {
             "apparatuses": [a.name for a in self._apparatuses],
             "nodes": self._registry.snapshot(),
+            "active_directives": len(self._active_directives),
+            "federation": self._federation.peer_status() if self._federation else None,
         }

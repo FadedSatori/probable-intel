@@ -51,6 +51,7 @@ class NodeSpec:
     proxy_pool: str = ""
     rate_limit_rpm: int = 60
     backend: dict[str, Any] = field(default_factory=dict)
+    llm: "LLMSpec | None" = None
 
     @property
     def emits_channel(self) -> str | None:
@@ -87,6 +88,22 @@ class RouterSpec:
 
 
 @dataclass
+class FederationPeerSpec:
+    url: str
+    trust_level: str = "restricted"
+    push_channels: list[str] = field(default_factory=list)
+    api_key_env: str = ""
+
+
+@dataclass
+class FederationSpec:
+    enabled: bool = False
+    peers: list[FederationPeerSpec] = field(default_factory=list)
+    auto_federate_critical: bool = True
+    ingest_channels: list[str] = field(default_factory=list)
+
+
+@dataclass
 class ApparatusSpec:
     name: str
     version: float = 1.0
@@ -97,6 +114,7 @@ class ApparatusSpec:
     llm: LLMSpec = field(default_factory=LLMSpec)
     storage: StorageSpec = field(default_factory=StorageSpec)
     router: RouterSpec = field(default_factory=RouterSpec)
+    federation: FederationSpec = field(default_factory=FederationSpec)
 
     def node_by_id(self, node_id: str) -> NodeSpec | None:
         return next((n for n in self.nodes if n.node_id == node_id), None)

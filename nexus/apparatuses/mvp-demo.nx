@@ -105,7 +105,13 @@ nodes:
   - type: StorageNode
     id: "archivist.storage.main"
     subscribe:
-      channels: ["analysis.entities.security", "analysis.sentiment.security", "analysis.kg.summary", "threat.security"]
+      channels:
+        - "analysis.entities.security"
+        - "analysis.sentiment.security"
+        - "analysis.kg.summary"
+        - "analysis.narrative.security"
+        - "threat.security"
+        - "ci.attribution.events"
     emit:
       channel: "sink.storage"
       priority: low
@@ -128,6 +134,46 @@ nodes:
     emit:
       channel: "ci.deception.triggers"
       priority: critical
+
+  - type: AttributionNode
+    id: "ci.attribution.main"
+    subscribe:
+      channels: ["ci.deception.triggers"]
+    config:
+      session_window_seconds: 3600
+      min_hits_to_profile: 2
+      kg_node_id: "kg.entities.security"
+    emit:
+      channel: "ci.attribution.events"
+      priority: high
+
+  - type: TaskRouterNode
+    id: "coordinator.task-router"
+    subscribe:
+      channels: ["threat.security", "analysis.anomaly", "ci.attribution.events"]
+    config:
+      min_severity: "HIGH"
+      directive_cooldown_seconds: 300
+      max_directives_per_hour: 10
+    emit:
+      channel: "system.task.directives"
+      priority: high
+
+  - type: NarrativeNode
+    id: "analyst.narrative.security"
+    subscribe:
+      channels: ["analysis.sentiment.security", "analysis.entities.security"]
+    config:
+      narrative_window: 10
+      emit_interval_seconds: 600
+    llm:
+      provider: "anthropic"
+      model: "claude-haiku-4-5-20251001"
+      api_key_env: "ANTHROPIC_API_KEY"
+      budget_per_day_usd: 1.0
+    emit:
+      channel: "analysis.narrative.security"
+      priority: low
 
 storage:
   primary:

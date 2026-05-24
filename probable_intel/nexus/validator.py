@@ -14,8 +14,8 @@ _LLM_ALLOWED_TYPES = {
 # Sinks that are exempt from "orphan channel" checks (write externally)
 _SINK_NODE_TYPES = {"AlertNode", "StorageNode"}
 
-# Channel name prefixes that are intentional terminal sinks
-_SINK_CHANNEL_PREFIXES = ("sink.",)
+# Channel name prefixes that are intentional terminal sinks or internal-only channels
+_SINK_CHANNEL_PREFIXES = ("sink.", "system.")
 
 
 class ApparatusValidator:
