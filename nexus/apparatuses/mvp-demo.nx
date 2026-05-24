@@ -81,6 +81,19 @@ nodes:
       channel: "analysis.anomaly"
       priority: high
 
+  - type: KnowledgeGraphNode
+    id: "kg.entities.security"
+    subscribe:
+      channels: ["analysis.entities.security"]
+    config:
+      persist_path: "/tmp/probable-intel-demo-kg.json"
+      emit_interval_seconds: 300
+      min_edge_weight: 2
+      max_nodes: 5000
+    emit:
+      channel: "analysis.kg.summary"
+      priority: low
+
   - type: AlertNode
     id: "sentinel.alert.security"
     subscribe:
@@ -92,7 +105,7 @@ nodes:
   - type: StorageNode
     id: "archivist.storage.main"
     subscribe:
-      channels: ["analysis.entities.security", "analysis.sentiment.security", "threat.security"]
+      channels: ["analysis.entities.security", "analysis.sentiment.security", "analysis.kg.summary", "threat.security"]
     emit:
       channel: "sink.storage"
       priority: low

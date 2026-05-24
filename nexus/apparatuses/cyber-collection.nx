@@ -165,6 +165,19 @@ nodes:
 
   # ── Archivists ──────────────────────────────────────────────────────────────
 
+  - type: KnowledgeGraphNode
+    id: "kg.entities.cyber"
+    subscribe:
+      channels: ["analysis.entities.cyber"]
+    config:
+      persist_path: "/tmp/probable-intel-cyber-kg.json"
+      emit_interval_seconds: 300
+      min_edge_weight: 2
+      max_nodes: 10000
+    emit:
+      channel: "analysis.kg.summary"
+      priority: low
+
   - type: StorageNode
     id: "archivist.storage.cyber"
     subscribe:
@@ -172,6 +185,7 @@ nodes:
         - "raw.api.cve"
         - "analysis.sentiment.cyber"
         - "analysis.entities.cyber"
+        - "analysis.kg.summary"
         - "threat.cyber"
     emit:
       channel: "sink.storage"
