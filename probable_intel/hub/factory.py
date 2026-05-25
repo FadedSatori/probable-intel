@@ -13,26 +13,40 @@ if TYPE_CHECKING:
 def _lazy_imports() -> dict[str, type[BaseNode]]:
     from ..nodes.harvesters.feed_node import FeedNode
     from ..nodes.harvesters.web_node import WebNode
+    from ..nodes.harvesters.api_node import ApiNode
+    from ..nodes.harvesters.social_node import SocialNode
     from ..nodes.analysts.sentiment_node import SentimentNode
     from ..nodes.analysts.entity_node import EntityExtractorNode
     from ..nodes.analysts.threat_node import ThreatAssessNode
+    from ..nodes.analysts.narrative_node import NarrativeNode
     from ..nodes.sentinels.alert_node import AlertNode
+    from ..nodes.sentinels.anomaly_node import AnomalyNode
     from ..nodes.archivists.storage_node import StorageNode
+    from ..nodes.archivists.kg_node import KnowledgeGraphNode
+    from ..nodes.coordinators.task_router import TaskRouterNode
     from ..nodes.counterintel.opsec_node import OpSecNode
     from ..nodes.counterintel.deception_node import DeceptionNode
     from ..nodes.counterintel.fingerprint_node import FingerprintDefenseNode
+    from ..nodes.counterintel.attribution_node import AttributionNode
 
     return {
         "FeedNode": FeedNode,
         "WebNode": WebNode,
+        "ApiNode": ApiNode,
+        "SocialNode": SocialNode,
         "SentimentNode": SentimentNode,
         "EntityExtractorNode": EntityExtractorNode,
         "ThreatAssessNode": ThreatAssessNode,
+        "NarrativeNode": NarrativeNode,
         "AlertNode": AlertNode,
+        "AnomalyNode": AnomalyNode,
         "StorageNode": StorageNode,
+        "KnowledgeGraphNode": KnowledgeGraphNode,
+        "TaskRouterNode": TaskRouterNode,
         "OpSecNode": OpSecNode,
         "DeceptionNode": DeceptionNode,
         "FingerprintDefenseNode": FingerprintDefenseNode,
+        "AttributionNode": AttributionNode,
     }
 
 

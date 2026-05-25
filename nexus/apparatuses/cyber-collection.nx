@@ -1,0 +1,221 @@
+# NEXUS v1.0 — Cyber Collection Apparatus
+# Demonstrates ApiNode + SocialNode alongside the analyst pipeline.
+# Sources: NVD CVE API, CIRCL CVE Search, Reddit r/netsec + r/cybersecurity, HackerNews, Mastodon infosec.exchange
+
+apparatus_name: "cyber-collection"
+version: 1.0
+description: "Broad cyber intel collection: CVE APIs + social signals → sentiment + threat assessment"
+trust_level: restricted
+owner: "probable-intel-ops"
+
+nodes:
+  # ── Harvesters ──────────────────────────────────────────────────────────────
+
+  - type: FeedNode
+    id: "feed.security-news"
+    targets:
+      - feed: "https://krebsonsecurity.com/feed/"
+      - feed: "https://feeds.feedburner.com/TheHackersNews"
+    schedule:
+      interval: "30m"
+      jitter: 120
+    filters:
+      keywords: ["breach", "vulnerability", "ransomware", "zero-day", "exploit", "CVE"]
+      min_word_count: 50
+    emit:
+      channel: "raw.feed.cyber"
+      priority: high
+
+  - type: ApiNode
+    id: "feed.nvd-cve"
+    targets:
+      - api: "https://services.nvd.nist.gov/rest/json/cves/2.0"
+        params:
+          resultsPerPage: 20
+          noRejected: ""
+        auth_env: "NVD_API_KEY"
+        auth_header: "apiKey"
+        response_path: "vulnerabilities"
+        id_field: "cve.id"
+        title_field: "cve.id"
+        content_field: "cve.descriptions.0.value"
+    schedule:
+      interval: "1h"
+      jitter: 180
+    filters:
+      keywords: ["critical", "high", "remote code execution", "zero-day", "actively exploited"]
+    emit:
+      channel: "raw.api.cve"
+      priority: high
+
+  - type: ApiNode
+    id: "feed.circl-cve"
+    targets:
+      - api: "https://cve.circl.lu/api/last/20"
+        response_path: ""
+        id_field: "id"
+        title_field: "id"
+        content_field: "summary"
+    schedule:
+      interval: "2h"
+      jitter: 300
+    emit:
+      channel: "raw.api.cve"
+      priority: normal
+
+  - type: SocialNode
+    id: "social.infosec"
+    targets:
+      - source: "reddit"
+        subreddit: "netsec"
+      - source: "reddit"
+        subreddit: "cybersecurity"
+      - source: "hackernews"
+        query: "vulnerability exploit security breach"
+      - source: "mastodon"
+        instance: "infosec.exchange"
+        hashtag: "infosec"
+    schedule:
+      interval: "20m"
+      jitter: 90
+    filters:
+      keywords: ["CVE", "breach", "exploit", "vulnerability", "ransomware", "zero-day", "hack"]
+      min_word_count: 10
+    emit:
+      channel: "raw.social.cyber"
+      priority: normal
+
+  # ── Analysts ────────────────────────────────────────────────────────────────
+
+  - type: SentimentNode
+    id: "analyst.sentiment.cyber"
+    subscribe:
+      channels: ["raw.feed.cyber", "raw.api.cve", "raw.social.cyber"]
+    backend:
+      primary: "vader"
+      fallback: "llm"
+      llm_threshold: "0.4"
+    emit:
+      channel: "analysis.sentiment.cyber"
+      priority: normal
+
+  - type: EntityExtractorNode
+    id: "analyst.entities.cyber"
+    subscribe:
+      channels: ["raw.feed.cyber", "raw.social.cyber"]
+    emit:
+      channel: "analysis.entities.cyber"
+      priority: normal
+
+  - type: ThreatAssessNode
+    id: "analyst.threat.cyber"
+    subscribe:
+      channels: ["analysis.sentiment.cyber"]
+    rules:
+      - condition: "sentiment_score < -0.3"
+        severity: MEDIUM
+        label: "negative-security-signal"
+      - condition: "sentiment_score < -0.5"
+        severity: HIGH
+        label: "high-threat-signal"
+      - condition: "sentiment_score < -0.7"
+        severity: CRITICAL
+        label: "critical-threat-indicator"
+    emit:
+      channel: "threat.cyber"
+      priority: high
+
+  # ── Sentinels ───────────────────────────────────────────────────────────────
+
+  - type: AnomalyNode
+    id: "anomaly.cyber-signals"
+    subscribe:
+      channels: ["analysis.sentiment.cyber", "raw.feed.cyber", "raw.api.cve", "raw.social.cyber"]
+    config:
+      window_seconds: 300
+      sentiment_window_size: 100
+      min_samples: 20
+    rules:
+      - condition: "volume_z_score > 3.0"
+        severity: HIGH
+        label: "packet-volume-spike"
+      - condition: "volume_z_score > 5.0"
+        severity: CRITICAL
+        label: "critical-volume-spike"
+      - condition: "sentiment_z_score < -2.5"
+        severity: HIGH
+        label: "sentiment-negativity-spike"
+      - condition: "sentiment_z_score < -4.0"
+        severity: CRITICAL
+        label: "critical-sentiment-collapse"
+      - condition: "sentiment_volatility > 0.4"
+        severity: MEDIUM
+        label: "sentiment-volatility-spike"
+    emit:
+      channel: "analysis.anomaly"
+      priority: high
+
+  - type: AlertNode
+    id: "sentinel.alert.cyber"
+    subscribe:
+      channels: ["threat.cyber", "analysis.anomaly", "ci.deception.triggers", "ci.opsec.events"]
+    emit:
+      channel: "sink.alerts"
+      priority: critical
+
+  # ── Archivists ──────────────────────────────────────────────────────────────
+
+  - type: KnowledgeGraphNode
+    id: "kg.entities.cyber"
+    subscribe:
+      channels: ["analysis.entities.cyber"]
+    config:
+      persist_path: "/tmp/probable-intel-cyber-kg.json"
+      emit_interval_seconds: 300
+      min_edge_weight: 2
+      max_nodes: 10000
+    emit:
+      channel: "analysis.kg.summary"
+      priority: low
+
+  - type: StorageNode
+    id: "archivist.storage.cyber"
+    subscribe:
+      channels:
+        - "raw.api.cve"
+        - "analysis.sentiment.cyber"
+        - "analysis.entities.cyber"
+        - "analysis.kg.summary"
+        - "threat.cyber"
+    emit:
+      channel: "sink.storage"
+      priority: low
+
+  # ── CounterIntel ────────────────────────────────────────────────────────────
+
+  - type: OpSecNode
+    id: "ci.opsec.cyber"
+    emit:
+      channel: "ci.opsec.events"
+      priority: normal
+
+  - type: DeceptionNode
+    id: "ci.deception.cyber"
+    honeypots:
+      - type: "fake_api_endpoint"
+        path: "/api/v1/intel/feeds"
+        canary_id: "canary-feeds-01"
+      - type: "fake_api_endpoint"
+        path: "/api/v1/nodes/list"
+        canary_id: "canary-nodes-01"
+      - type: "fake_dashboard"
+        path: "/admin/dashboard"
+        canary_id: "canary-dash-01"
+    emit:
+      channel: "ci.deception.triggers"
+      priority: critical
+
+storage:
+  primary:
+    backend: "sqlite"
+    path: "/tmp/probable-intel-cyber.db"

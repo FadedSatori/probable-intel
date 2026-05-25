@@ -14,6 +14,9 @@ _LLM_ALLOWED_TYPES = {
 # Sinks that are exempt from "orphan channel" checks (write externally)
 _SINK_NODE_TYPES = {"AlertNode", "StorageNode"}
 
+# Channel name prefixes that are intentional terminal sinks or internal-only channels
+_SINK_CHANNEL_PREFIXES = ("sink.", "system.")
+
 
 class ApparatusValidator:
     def validate(self, spec: ApparatusSpec) -> None:
@@ -76,7 +79,9 @@ class ApparatusValidator:
         subscribed = spec.subscribed_channels()
 
         for ch in emitted - subscribed:
-            # Sink nodes intentionally emit to external channels — that's fine
+            # Intentional terminal sinks — exempt by node type or channel prefix
+            if any(ch.startswith(pfx) for pfx in _SINK_CHANNEL_PREFIXES):
+                continue
             emitting_node = next(
                 (n for n in spec.nodes if n.emits_channel == ch), None
             )

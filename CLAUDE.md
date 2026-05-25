@@ -7,18 +7,18 @@ Developer reference for working on this codebase with Claude Code.
 ```bash
 # Install (editable, with dev extras)
 pip install -e ".[dev]"
-pip install atoma vaderSentiment aiosqlite httpx pyyaml   # runtime deps not in pyproject yet
+pip install atoma vaderSentiment aiosqlite httpx pyyaml networkx respx   # runtime + test deps
 
 # Optional extras
 pip install -e ".[nlp]"      # spaCy (EntityExtractorNode full mode)
 pip install -e ".[browser]"  # Playwright + curl_cffi (WebNode, FingerprintDefenseNode)
 
 # Run all tests
-pytest
+python -m pytest
 
 # Run by tier
-pytest tests/unit/
-pytest tests/integration/
+python -m pytest tests/unit/
+python -m pytest tests/integration/
 
 # Lint / type check
 ruff check .
@@ -37,14 +37,24 @@ pi watch    nexus/apparatuses/mvp-demo.nx [--channel raw.feed.security]
 probable_intel/
 ├── spine/          # IntelPacket, Spine (async bus), Channel (priority lanes)
 ├── nexus/          # NEXUS DSL — parser, validator, loader, spec dataclasses, errors
-├── hub/            # Hub orchestrator, NodeRegistry, lifecycle, health, NodeFactory, API
+├── hub/            # Hub orchestrator, NodeRegistry, lifecycle, health, NodeFactory, API,
+│                   # federation.py (FederatedSpine — multi-hub HTTP push/SSE pull)
+├── llm/            # Provider-agnostic LLM layer
+│   ├── base.py              # LLMProvider ABC + LLMError
+│   ├── anthropic_provider.py
+│   ├── ollama_provider.py   # Ollama local models
+│   ├── vllm_provider.py     # vLLM / any OpenAI-compat endpoint
+│   └── router.py            # LLMRouter — budget guard + provider factory
 ├── nodes/
-│   ├── base.py                     # BaseNode — state machine, heartbeat, run loop
-│   ├── harvesters/                 # FeedNode, WebNode
-│   ├── analysts/                   # SentimentNode, EntityExtractorNode, ThreatAssessNode
-│   ├── sentinels/                  # AlertNode
-│   ├── archivists/                 # StorageNode
-│   └── counterintel/               # OpSecNode, DeceptionNode, FingerprintDefenseNode
+│   ├── base.py                     # BaseNode — state machine, heartbeat, run loop, pause support
+│   ├── harvesters/                 # FeedNode, WebNode, ApiNode, SocialNode
+│   ├── analysts/                   # SentimentNode, EntityExtractorNode, ThreatAssessNode,
+│   │                               #   NarrativeNode (LLM-powered synthesis)
+│   ├── sentinels/                  # AlertNode, AnomalyNode
+│   ├── archivists/                 # StorageNode, KnowledgeGraphNode
+│   ├── coordinators/               # TaskRouterNode (OODA loop)
+│   └── counterintel/               # OpSecNode, DeceptionNode, FingerprintDefenseNode,
+│                                   #   AttributionNode (passive adversary profiling)
 ├── storage/        # SQLiteBackend (async, dedup via INSERT OR IGNORE)
 └── cli/            # Typer app — validate / run / status / watch
 
@@ -54,8 +64,8 @@ nexus/
 └── templates/      # Alert templates (Jinja2)
 
 tests/
-├── unit/           # test_nexus_parser, test_spine, test_threat_eval
-└── integration/    # test_apparatus_e2e (5 full-pipeline tests)
+├── unit/           # test_nexus_parser, test_spine, test_threat_eval, nodes/
+└── integration/    # test_apparatus_e2e (full-pipeline tests)
 ```
 
 ## Architecture
@@ -69,7 +79,9 @@ Hub.load_apparatus()
   ├── NodeFactory  (NodeSpec → Python class instance)
   ├── NodeRegistry (id → node + state)
   ├── NodeLifecycleManager  (DECLARED → INITIALIZING → IDLE → RUNNING → ERROR/STOPPED)
-  └── HealthMonitor (heartbeat every 15s; threshold = 3× interval)
+  ├── HealthMonitor (heartbeat every 15s; threshold = 3× interval)
+  ├── FederatedSpine (optional — wires hub to peer hubs over HTTP)
+  └── directive_loop (applies TaskDirectivePackets from system.task.directives)
                               ↓
                     Spine (named channels, 4 priority lanes each)
                               ↓
@@ -80,14 +92,19 @@ Hub.load_apparatus()
 
 **IntelPacket** — all inter-node data. Key fields: `packet_type`, `source_node_id`, `apparatus_id`, `channel`, `payload: dict`, `priority: Priority`, `trust_level: TrustLevel`, `provenance: list[str]`, `source_hash` (SHA-256, for dedup), `ttl_seconds`. Use `packet.relay(new_node_id, new_channel, ...)` to forward — preserves `source_hash` and extends provenance.
 
-**BaseNode** — subclass and implement `setup()`, `run()`, `teardown()`. The base class handles the run loop (calls `run()` repeatedly), heartbeat emission, and exponential backoff on errors. `run()` should block on one unit of work (e.g. wait for one packet), not loop forever.
+**BaseNode** — subclass and implement `setup()`, `run()`, `teardown()`. The base class handles the run loop (calls `run()` repeatedly), heartbeat emission, exponential backoff on errors, and `_paused_until` support (set by Hub directives). `run()` should block on one unit of work (e.g. wait for one packet), not loop forever.
+
+**LLMRouter** — provider-agnostic. Select via `spec.llm.provider`:
+- `anthropic` — Anthropic Claude API (requires `ANTHROPIC_API_KEY`)
+- `ollama` — Ollama local model server (no key; set `base_url`)
+- `vllm` — vLLM or any OpenAI-compatible endpoint (set `base_url`; optional key)
 
 ## Adding a new node type
 
 1. Create `probable_intel/nodes/<tier>/<name>_node.py` subclassing `BaseNode`
 2. Implement `setup()`, `run()`, `teardown()`
 3. Register in `probable_intel/hub/factory.py` → `_lazy_imports()` dict
-4. Add the type string to `probable_intel/nexus/grammar.py` valid node types list
+4. Add the type string to `probable_intel/nexus/parser.py` → `_VALID_NODE_TYPES` set
 5. Write a unit test under `tests/unit/nodes/`
 
 ## NEXUS DSL (.nx files)
@@ -123,10 +140,23 @@ nodes:
     backend:
       primary: "vader"
       fallback: "llm"
+    llm:
+      provider: "ollama"           # anthropic | ollama | vllm
+      model: "llama3.2"
+      base_url: "http://localhost:11434"
+      budget_per_day_usd: 0.0     # 0 = no budget cap (local providers)
     honeypots:
       - type: "fake_api_endpoint"
         path: "/api/v1/fake"
         canary_id: "canary-01"
+
+federation:
+  enabled: true
+  peers:
+    - url: "http://hub-b.internal:8080"
+      api_key_env: "PEER_B_KEY"
+  auto_federate_critical: true
+  ingest_channels: ["threat.*"]
 
 storage:
   primary:
@@ -178,17 +208,43 @@ Copy `.env.example` to `.env`. Required for full operation:
 
 | Variable | Purpose |
 |---|---|
-| `ANTHROPIC_API_KEY` | LLM fallback (Phase 6, not yet wired) |
+| `ANTHROPIC_API_KEY` | Anthropic Claude provider (SentimentNode, NarrativeNode, etc.) |
 | `SQLITE_PATH` | Override default DB path |
 | `ALERT_WEBHOOK_URL` | AlertNode webhook sink |
 | `MASTER_KEY` | Encryption key for classified packets |
 | `HUB_BIND_HOST` | HubAPI bind address (default `127.0.0.1`) |
 
-## What's deferred (post-MVP)
+Local providers (Ollama, vLLM) require no API key — set `base_url` in the `llm:` block instead.
 
-- LLM integration — `anthropic_provider.py`, `LLMRouter` (budget cap), wired into `SentimentNode` + `EntityExtractorNode` when `backend.fallback: llm`
-- `SocialNode`, `NarrativeNode`, `KnowledgeGraphNode`, `AnomalyNode`, `AttributionNode`
-- Redis Spine adapter (replace asyncio.Queue with Redis streams for multi-process)
-- Neo4j backend for `KnowledgeGraphNode`
+## Implemented node catalog
+
+| Tier | Node | Description |
+|---|---|---|
+| Harvester | `FeedNode` | RSS/Atom feed polling |
+| Harvester | `WebNode` | Web page scraping (Playwright-capable) |
+| Harvester | `ApiNode` | Authenticated JSON REST APIs (NVD, CIRCL, etc.) |
+| Harvester | `SocialNode` | Reddit, HackerNews, Mastodon |
+| Analyst | `SentimentNode` | VADER + LLM fallback |
+| Analyst | `EntityExtractorNode` | spaCy NER + LLM fallback |
+| Analyst | `ThreatAssessNode` | Rule-based threat scoring |
+| Analyst | `NarrativeNode` | LLM-powered rolling-window synthesis |
+| Sentinel | `AnomalyNode` | Rolling-baseline z-score anomaly detection |
+| Sentinel | `AlertNode` | Webhook + logfile alerting |
+| Archivist | `StorageNode` | SQLite persistence |
+| Archivist | `KnowledgeGraphNode` | Entity co-occurrence graph (NetworkX) |
+| Coordinator | `TaskRouterNode` | OODA loop — LLM-enhanced collection directives |
+| CounterIntel | `OpSecNode` | Request-pattern auditing |
+| CounterIntel | `DeceptionNode` | Honeypot endpoints + canary tokens |
+| CounterIntel | `FingerprintDefenseNode` | Browser identity injection |
+| CounterIntel | `AttributionNode` | Passive adversary profiling from honeypot hits |
+
+## What's deferred (genuinely not built)
+
+- Redis Spine adapter (replace asyncio.Queue with Redis streams for multi-process scale-out)
+- Neo4j backend for `KnowledgeGraphNode` (currently NetworkX in-memory only)
 - Textual TUI dashboard
-- `MonitorNode` (continuous watch over long-lived targets)
+- `MonitorNode` (continuous watch over long-lived targets, distinct from AnomalyNode)
+- Semantic memory layer (vector embeddings + similarity retrieval)
+- Predictive threat modeling (time-series over KG history)
+- MITRE ATT&CK mapping + STIX 2.1 export
+- Autonomous OSINT expansion (ReconNode, DarkWebNode)

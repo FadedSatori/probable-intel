@@ -25,6 +25,7 @@ class EntityExtractorNode(BaseNode):
         self._emit_channel: str = ""
         self._emit_priority: Priority = Priority.NORMAL
         self._confidence_min: float = 0.0
+        self._llm_router = None
 
     async def setup(self) -> None:
         try:
@@ -40,6 +41,14 @@ class EntityExtractorNode(BaseNode):
                 _SPACY_MODEL, _SPACY_MODEL,
             )
             self._nlp = None
+
+        if self.spec.llm is not None and self._nlp is None:
+            try:
+                from ...llm.router import LLMRouter
+                self._llm_router = LLMRouter.from_spec(self.spec.llm)
+                log.info("node %s: LLM entity extraction enabled (spaCy unavailable)", self.node_id)
+            except Exception as e:
+                log.warning("node %s: LLM setup failed: %s", self.node_id, e)
 
         if self.spec.emit:
             self._emit_channel = self.spec.emit.channel
@@ -71,18 +80,39 @@ class EntityExtractorNode(BaseNode):
         await self._process(packet)
 
     async def _process(self, packet: IntelPacket) -> None:
+        import json
         text = packet.payload.get("content") or packet.payload.get("body", "")
         if not text:
             return
 
-        # Graceful degradation: relay packet unchanged if model unavailable
+        # Graceful degradation: try LLM fallback if spaCy unavailable
         if not self._nlp:
+            entities = []
+            tags = list(packet.tags)
+            if self._llm_router is not None:
+                try:
+                    raw = await self._llm_router.complete(
+                        'Extract named entities as JSON array: '
+                        '[{"text":"...","type":"ORG|CVE|GPE|PERSON|PRODUCT"},...]\n\n'
+                        f'{text[:3000]}',
+                        max_tokens=512,
+                    )
+                    # Extract JSON array from response (may have surrounding text)
+                    match = __import__("re").search(r"\[.*\]", raw, __import__("re").DOTALL)
+                    if match:
+                        entities = json.loads(match.group())
+                        tags.append("llm-entities")
+                except Exception as e:
+                    log.debug("node %s: LLM entity fallback failed: %s", self.node_id, e)
+
             if self._emit_channel:
-                await self.emit(self._emit_channel, packet.relay(
+                out = packet.relay(
                     self.node_id, self._emit_channel,
                     packet_type="EntityPacket",
-                    payload={**packet.payload, "entities": [], "entity_count": 0},
-                ))
+                    payload={**packet.payload, "entities": entities, "entity_count": len(entities)},
+                )
+                out.tags = tags
+                await self.emit(self._emit_channel, out)
             return
 
         doc = self._nlp(text[:100_000])

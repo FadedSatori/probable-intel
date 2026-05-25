@@ -5,8 +5,8 @@ import logging
 import time
 from typing import TYPE_CHECKING
 
-from fastapi import FastAPI, Request, Response
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, Header, HTTPException, Request, Response
+from fastapi.responses import JSONResponse, StreamingResponse
 
 if TYPE_CHECKING:
     from .hub import Hub
@@ -87,7 +87,67 @@ def create_api(hub: "Hub") -> FastAPI:
         )
         return Response(content=gif, media_type="image/gif")
 
+    # ── federation endpoints ────────────────────────────────────────────────
+
+    @app.post("/federate/ingest")
+    async def federate_ingest(
+        request: Request,
+        x_federation_key: str | None = Header(default=None),
+    ) -> dict:
+        _check_federation_key(hub, x_federation_key)
+        data = await request.json()
+        fed = getattr(hub, "_federation", None)
+        if fed is None:
+            raise HTTPException(status_code=503, detail="federation not enabled")
+        await fed.ingest(data, peer_url=str(request.client.host if request.client else "unknown"))
+        return {"accepted": True}
+
+    @app.get("/federate/stream")
+    async def federate_stream(
+        x_federation_key: str | None = Header(default=None),
+    ) -> StreamingResponse:
+        _check_federation_key(hub, x_federation_key)
+        fed = getattr(hub, "_federation", None)
+        if fed is None:
+            raise HTTPException(status_code=503, detail="federation not enabled")
+
+        import asyncio
+
+        async def event_stream():
+            from .federation import _packet_to_dict
+            q = fed.add_stream_subscriber()
+            try:
+                while True:
+                    try:
+                        packet = await asyncio.wait_for(q.get(), timeout=30.0)
+                        data = json.dumps(_packet_to_dict(packet))
+                        yield f"data:{data}\n\n"
+                    except asyncio.TimeoutError:
+                        yield ": heartbeat\n\n"
+            finally:
+                fed.remove_stream_subscriber(q)
+
+        return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+    @app.get("/federate/peers")
+    async def federate_peers(
+        x_federation_key: str | None = Header(default=None),
+    ) -> dict:
+        _check_federation_key(hub, x_federation_key)
+        fed = getattr(hub, "_federation", None)
+        if fed is None:
+            return {"peers": [], "enabled": False}
+        return {"peers": fed.peer_status(), "enabled": True}
+
     return app
+
+
+def _check_federation_key(hub, provided: str | None) -> None:
+    """Validate X-Federation-Key against configured secret."""
+    from ..hub.secrets import SecretManager
+    expected = SecretManager().get("FEDERATION_API_KEY", default="")
+    if expected and provided != expected:
+        raise HTTPException(status_code=401, detail="invalid federation key")
 
 
 async def _fire_canary(hub: "Hub", canary_id: str, request: Request) -> None:

@@ -9,7 +9,7 @@ import yaml
 
 from .errors import NEXUSError
 from .spec import (
-    ApparatusSpec, EmitSpec, HoneypotSpec, LLMSpec,
+    ApparatusSpec, EmitSpec, FederationPeerSpec, FederationSpec, HoneypotSpec, LLMSpec,
     NodeSpec, RouterSpec, RuleSpec, ScheduleSpec, StorageSpec,
 )
 
@@ -95,6 +95,8 @@ class NexusParser:
             self._build_storage(spec.storage, data["storage"])
         if "router" in data and isinstance(data["router"], dict):
             self._build_router(spec.router, data["router"])
+        if "federation" in data and isinstance(data["federation"], dict):
+            self._build_federation(spec.federation, data["federation"])
 
         return spec
 
@@ -129,7 +131,10 @@ class NexusParser:
                 elif "url" in t:
                     spec.targets.append({"type": "web", "url": str(t["url"])})
                 elif "api" in t:
-                    spec.targets.append({"type": "api", "url": str(t["api"])})
+                    spec.targets.append({"type": "api", "url": str(t["api"]),
+                                         **{k: v for k, v in t.items() if k != "api"}})
+                elif "source" in t:
+                    spec.targets.append({"type": "social", **t})
 
         # subscribe
         sub = data.get("subscribe", {})
@@ -202,6 +207,13 @@ class NexusParser:
         if isinstance(backend, dict):
             spec.backend = {str(k): str(v) for k, v in backend.items()}
 
+        # per-node llm config
+        node_llm = data.get("llm")
+        if node_llm and isinstance(node_llm, dict):
+            llm_spec = LLMSpec()
+            self._build_llm(llm_spec, node_llm)
+            spec.llm = llm_spec
+
         return spec
 
     # ── top-level blocks ────────────────────────────────────────────────────
@@ -213,6 +225,8 @@ class NexusParser:
             llm.model = str(data["model"])
         if "api_key_env" in data:
             llm.api_key_env = str(data["api_key_env"])
+        if "base_url" in data:
+            llm.base_url = str(data["base_url"])
         if "max_tokens" in data:
             llm.max_tokens = int(data["max_tokens"])
         if "budget_per_day_usd" in data:
@@ -236,3 +250,16 @@ class NexusParser:
             router.overflow_policy = str(data["overflow_policy"])
         if "backpressure_threshold" in data:
             router.backpressure_threshold = int(data["backpressure_threshold"])
+
+    def _build_federation(self, fed: FederationSpec, data: dict) -> None:
+        fed.enabled = bool(data.get("enabled", False))
+        fed.auto_federate_critical = bool(data.get("auto_federate_critical", True))
+        fed.ingest_channels = [str(c) for c in data.get("ingest_channels", [])]
+        for peer in data.get("peers", []):
+            if isinstance(peer, dict) and "url" in peer:
+                fed.peers.append(FederationPeerSpec(
+                    url=str(peer["url"]),
+                    trust_level=str(peer.get("trust_level", "restricted")),
+                    push_channels=[str(c) for c in peer.get("push_channels", [])],
+                    api_key_env=str(peer.get("api_key_env", "")),
+                ))
