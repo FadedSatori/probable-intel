@@ -225,6 +225,8 @@ class NexusParser:
             llm.model = str(data["model"])
         if "api_key_env" in data:
             llm.api_key_env = str(data["api_key_env"])
+        if "base_url" in data:
+            llm.base_url = str(data["base_url"])
         if "max_tokens" in data:
             llm.max_tokens = int(data["max_tokens"])
         if "budget_per_day_usd" in data:

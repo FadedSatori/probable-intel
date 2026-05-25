@@ -40,6 +40,7 @@ class BaseNode(ABC):
         self._error_count = 0
         self._last_heartbeat = 0.0
         self._stop_event = asyncio.Event()
+        self._paused_until: float = 0.0  # set by Hub directive to pause this node
 
     # ── lifecycle ──────────────────────────────────────────────────────────
 
@@ -87,6 +88,9 @@ class BaseNode(ABC):
 
     async def _run_loop(self) -> None:
         while not self._stop_event.is_set():
+            if time.time() < self._paused_until:
+                await asyncio.sleep(1.0)
+                continue
             try:
                 self.state = NodeState.RUNNING
                 await self.run()

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from pathlib import Path
 
 from ..nexus.loader import NexusLoader
@@ -94,10 +95,19 @@ class Hub:
             while True:
                 packet = await sub.get()
                 await self._apply_directive(packet)
+                self._prune_directives()
         except asyncio.CancelledError:
             pass
         finally:
             sub.close()
+
+    def _prune_directives(self) -> None:
+        """Remove directives whose TTL has elapsed."""
+        now = time.time()
+        self._active_directives = {
+            k: v for k, v in self._active_directives.items()
+            if now - v.get("_applied_at", now) < v.get("ttl_seconds", 3600)
+        }
 
     async def _apply_directive(self, packet) -> None:
         payload = packet.payload
@@ -107,7 +117,9 @@ class Hub:
         ttl = int(payload.get("ttl_seconds", 3600))
 
         log.info("hub: applying directive %r → %r (TTL %ds)", dtype, target_id, ttl)
-        self._active_directives[str(packet.packet_id)] = {**payload, "_applied_at": __import__("time").time()}
+        self._active_directives[str(packet.packet_id)] = {
+            **payload, "_applied_at": time.time(),
+        }
 
         node = self._registry.get(target_id)
         if node is None:
@@ -120,6 +132,22 @@ class Hub:
                 if kw:
                     node._keywords.add(kw)  # type: ignore[attr-defined]
                     log.info("hub: added keyword filter %r to %s", kw, target_id)
+
+            elif dtype == "expand_collection" and hasattr(node, "_interval"):
+                node._interval = max(30.0, node._interval * 0.5)  # type: ignore[attr-defined]
+                log.info("hub: expanded collection on %s → interval %.0fs", target_id, node._interval)
+
+            elif dtype == "pause_channel":
+                node._paused_until = time.time() + ttl
+                log.info("hub: paused %s for %ds", target_id, ttl)
+
+            elif dtype == "deprioritize" and hasattr(node, "_emit_priority"):
+                from ..spine.packet import Priority
+                current = node._emit_priority  # type: ignore[attr-defined]
+                if current.value > Priority.LOW.value:
+                    node._emit_priority = Priority(current.value - 1)  # type: ignore[attr-defined]
+                    log.info("hub: deprioritized %s → %s", target_id, node._emit_priority.name)
+
         except Exception as e:
             log.warning("hub: directive apply failed: %s", e)
 

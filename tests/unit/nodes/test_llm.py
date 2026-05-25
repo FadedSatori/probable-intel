@@ -1,4 +1,4 @@
-"""Unit tests for LLM layer — LLMRouter budget guard and node integration."""
+"""Unit tests for LLM layer — providers, LLMRouter budget guard, node integration."""
 from __future__ import annotations
 
 import asyncio
@@ -9,19 +9,87 @@ from probable_intel.nexus.spec import LLMSpec, NodeSpec, EmitSpec
 from probable_intel.spine.spine import Spine
 from probable_intel.spine.packet import IntelPacket, Priority
 from probable_intel.llm.router import LLMRouter, LLMBudgetError
-from probable_intel.llm.anthropic_provider import AnthropicProvider, LLMError
+from probable_intel.llm.base import LLMError, LLMProvider
+from probable_intel.llm.anthropic_provider import AnthropicProvider
+from probable_intel.llm.ollama_provider import OllamaProvider
+from probable_intel.llm.vllm_provider import VLLMProvider
 
 
-def _make_llm_spec(budget=5.0, model="claude-haiku-4-5-20251001") -> LLMSpec:
-    return LLMSpec(provider="anthropic", model=model,
-                   api_key_env="ANTHROPIC_API_KEY", max_tokens=8000,
-                   budget_per_day_usd=budget)
+def _make_llm_spec(budget=5.0, model="claude-haiku-4-5-20251001",
+                   provider="anthropic", base_url="") -> LLMSpec:
+    return LLMSpec(provider=provider, model=model,
+                   api_key_env="ANTHROPIC_API_KEY", base_url=base_url,
+                   max_tokens=4096, budget_per_day_usd=budget)
 
 
 def _mock_provider(response: str = "0.5") -> AnthropicProvider:
     provider = MagicMock(spec=AnthropicProvider)
     provider.complete = AsyncMock(return_value=response)
     return provider
+
+
+# ── Provider abstraction ──────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_ollama_provider_posts_to_api_chat(respx_mock):
+    """OllamaProvider POSTs to /api/chat and returns message.content."""
+    import respx, httpx
+    respx_mock.post("http://localhost:11434/api/chat").mock(
+        return_value=httpx.Response(200, json={"message": {"content": "ollama says hi"}})
+    )
+    spec = _make_llm_spec(provider="ollama", model="llama3.2", budget=0.0)
+    provider = OllamaProvider(spec)
+    result = await provider.complete("hello", system="you are helpful")
+    assert result == "ollama says hi"
+
+
+@pytest.mark.asyncio
+async def test_vllm_provider_posts_to_chat_completions(respx_mock):
+    """VLLMProvider POSTs to /v1/chat/completions and returns choices content."""
+    import respx, httpx
+    respx_mock.post("http://localhost:8000/v1/chat/completions").mock(
+        return_value=httpx.Response(200, json={
+            "choices": [{"message": {"content": "vllm says hi"}}]
+        })
+    )
+    spec = _make_llm_spec(provider="vllm", model="mistral-7b", budget=0.0,
+                          base_url="http://localhost:8000")
+    provider = VLLMProvider(spec)
+    result = await provider.complete("hello")
+    assert result == "vllm says hi"
+
+
+def test_router_from_spec_selects_ollama():
+    """LLMRouter.from_spec dispatches to OllamaProvider when provider='ollama'."""
+    spec = _make_llm_spec(provider="ollama", model="llama3.2", budget=0.0)
+    router = LLMRouter.from_spec(spec)
+    assert isinstance(router._provider, OllamaProvider)
+
+
+def test_router_from_spec_selects_vllm():
+    """LLMRouter.from_spec dispatches to VLLMProvider when provider='vllm'."""
+    spec = _make_llm_spec(provider="vllm", model="mistral-7b", budget=0.0)
+    router = LLMRouter.from_spec(spec)
+    assert isinstance(router._provider, VLLMProvider)
+
+
+@pytest.mark.asyncio
+async def test_router_skips_budget_for_free_providers():
+    """budget_per_day_usd=0.0 disables the budget guard entirely."""
+    spec = _make_llm_spec(provider="ollama", budget=0.0)
+    mock = _mock_provider("response")
+    router = LLMRouter(mock, spec)
+    # 1000 calls should never raise LLMBudgetError
+    for _ in range(50):
+        await router.complete("x" * 1000, max_tokens=512)
+    assert router.usd_today == 0.0  # not tracked for free providers
+
+
+def test_router_unknown_provider_raises():
+    """LLMError raised for unrecognised provider name."""
+    spec = _make_llm_spec(provider="openai")
+    with pytest.raises(LLMError, match="unknown LLM provider"):
+        LLMRouter.from_spec(spec)
 
 
 # ── LLMRouter budget guard ────────────────────────────────────────────────────

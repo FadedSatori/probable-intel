@@ -65,9 +65,10 @@ class NodeSpec:
 @dataclass
 class LLMSpec:
     provider: str = "anthropic"
-    model: str = "claude-opus-4-5"
+    model: str = "claude-haiku-4-5-20251001"
     api_key_env: str = "ANTHROPIC_API_KEY"
-    max_tokens: int = 8000
+    base_url: str = ""               # for ollama / vllm / custom OpenAI-compat endpoints
+    max_tokens: int = 4096
     budget_per_day_usd: float = 5.0
 
 
