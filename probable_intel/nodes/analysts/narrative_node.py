@@ -141,5 +141,9 @@ class NarrativeNode(BaseNode):
             },
             priority=self._emit_priority,
         )
+        # Credit all window source nodes in provenance, not just the trigger packet
+        for src in {item["source"] for item in items}:
+            if src not in out.provenance:
+                out.provenance.append(src)
         await self.emit(self._emit_channel, out)
         log.info("node %s: narrative emitted (%d sources)", self.node_id, len(items))

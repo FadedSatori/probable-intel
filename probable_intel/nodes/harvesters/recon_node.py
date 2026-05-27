@@ -52,8 +52,10 @@ class ReconNode(BaseNode):
         self._cooldown_seconds: float = 6 * 3600
         self._feed_node_id: str = ""
         self._client: httpx.AsyncClient | None = None
-        self._seen_urls: set[str] = set()
+        # Ordered dict used as an insertion-order set for LRU dedup pruning
+        self._seen_urls: dict[str, None] = {}
         self._last_searched: dict[str, float] = {}  # entity_key → timestamp
+        self._atoma_ok: bool = True
 
     async def setup(self) -> None:
         cfg = self.spec.config
@@ -76,6 +78,16 @@ class ReconNode(BaseNode):
                 "Accept-Language": "en-US,en;q=0.5",
             },
         )
+        try:
+            import atoma  # noqa: F401
+        except ImportError:
+            self._atoma_ok = False
+            log.warning(
+                "node %s: 'atoma' not installed; ReconNode will produce no output. "
+                "Install with: pip install atoma",
+                self.node_id,
+            )
+
         self._subscriptions = [
             self.spine.subscribe(ch) for ch in self.spec.subscribe_channels
         ]
@@ -167,13 +179,14 @@ class ReconNode(BaseNode):
     async def _parse_and_emit(
         self, content: bytes, entity: dict[str, Any], trigger: IntelPacket
     ) -> int:
+        if not self._atoma_ok:
+            return 0
+        import atoma
         try:
-            import atoma
             feed = atoma.parse_rss_bytes(content)
             items = feed.items
         except Exception:
             try:
-                import atoma
                 feed = atoma.parse_atom_bytes(content)
                 items = feed.entries
             except Exception as e:
@@ -189,9 +202,12 @@ class ReconNode(BaseNode):
                 dedup = hashlib.sha256(item_url.encode()).hexdigest()[:16]
                 if dedup in self._seen_urls:
                     continue
-                self._seen_urls.add(dedup)
+                self._seen_urls[dedup] = None
                 if len(self._seen_urls) > 100_000:
-                    self._seen_urls = set(list(self._seen_urls)[-50_000:])
+                    # Prune oldest 50k — dict preserves insertion order (Python 3.7+)
+                    oldest = list(self._seen_urls.keys())[:50_000]
+                    for k in oldest:
+                        del self._seen_urls[k]
 
                 title = str(getattr(item, "title", None) or "")
                 description = str(getattr(item, "summary", None) or getattr(item, "content", None) or "")
