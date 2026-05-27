@@ -1,6 +1,6 @@
 # NEXUS v1.0 — Cyber Collection Apparatus
-# Demonstrates ApiNode + SocialNode alongside the analyst pipeline.
-# Sources: NVD CVE API, CIRCL CVE Search, Reddit r/netsec + r/cybersecurity, HackerNews, Mastodon infosec.exchange
+# Sources: RSS feeds (Krebs, THN, Reddit), NVD CVE API, CIRCL CVE Search, HackerNews, Mastodon infosec.exchange
+# Note: Reddit uses RSS feed (no OAuth required). NVD works best with NVD_API_KEY env var set.
 
 apparatus_name: "cyber-collection"
 version: 1.0
@@ -16,6 +16,8 @@ nodes:
     targets:
       - feed: "https://krebsonsecurity.com/feed/"
       - feed: "https://feeds.feedburner.com/TheHackersNews"
+      - feed: "https://www.reddit.com/r/netsec/.rss"
+      - feed: "https://www.reddit.com/r/cybersecurity/.rss"
     schedule:
       interval: "30m"
       jitter: 120
@@ -66,10 +68,6 @@ nodes:
   - type: SocialNode
     id: "social.infosec"
     targets:
-      - source: "reddit"
-        subreddit: "netsec"
-      - source: "reddit"
-        subreddit: "cybersecurity"
       - source: "hackernews"
         query: "vulnerability exploit security breach"
       - source: "mastodon"

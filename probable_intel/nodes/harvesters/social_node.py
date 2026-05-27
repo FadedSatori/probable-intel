@@ -18,7 +18,10 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-_REDDIT_UA = "probable-intel/0.1 (social collector; +https://github.com/probable-intel)"
+_BROWSER_UA = (
+    "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) "
+    "Gecko/20100101 Firefox/128.0"
+)
 
 
 class SocialNode(BaseNode):
@@ -60,7 +63,11 @@ class SocialNode(BaseNode):
         self._client = httpx.AsyncClient(
             follow_redirects=True,
             timeout=30,
-            headers={"User-Agent": _REDDIT_UA},
+            headers={
+                "User-Agent": _BROWSER_UA,
+                "Accept": "application/json, */*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.5",
+            },
         )
 
     async def teardown(self) -> None:
@@ -90,42 +97,18 @@ class SocialNode(BaseNode):
     # ── Reddit ────────────────────────────────────────────────────────────────
 
     async def _fetch_reddit(self, target: dict[str, Any]) -> None:
+        """Reddit's public JSON API requires OAuth since June 2023.
+
+        Use FeedNode with https://www.reddit.com/r/<subreddit>/.rss instead,
+        which works without authentication. This method is kept for backwards
+        compatibility but logs a one-time warning and is a no-op.
+        """
         subreddit = target.get("subreddit", "")
-        if not subreddit:
-            log.warning("node %s: reddit target missing subreddit", self.node_id)
-            return
-
-        url = f"https://www.reddit.com/r/{subreddit}/new.json?limit=25"
-        try:
-            resp = await self._client.get(url)
-            resp.raise_for_status()
-            data = resp.json()
-        except Exception as e:
-            log.error("node %s: reddit fetch failed %s: %s", self.node_id, subreddit, e)
-            return
-
-        posts = data.get("data", {}).get("children", [])
-        for post in posts:
-            p = post.get("data", {})
-            permalink = f"https://www.reddit.com{p.get('permalink', '')}"
-            title = p.get("title", "")
-            selftext = p.get("selftext", "")
-            content = f"{title}\n{selftext}".strip()
-
-            await self._maybe_emit(
-                url=permalink,
-                title=title,
-                content=content,
-                author=f"u/{p.get('author', 'unknown')}",
-                source="reddit",
-                extra={
-                    "subreddit": subreddit,
-                    "score": p.get("score", 0),
-                    "published": datetime.fromtimestamp(
-                        p.get("created_utc", 0), tz=timezone.utc
-                    ).isoformat(),
-                },
-            )
+        log.warning(
+            "node %s: Reddit JSON API requires OAuth (disabled since 2023). "
+            "Use FeedNode with target feed: https://www.reddit.com/r/%s/.rss instead.",
+            self.node_id, subreddit or "<subreddit>",
+        )
 
     # ── HackerNews ────────────────────────────────────────────────────────────
 
