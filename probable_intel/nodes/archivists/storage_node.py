@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
 from pathlib import Path
@@ -44,16 +43,9 @@ class StorageNode(BaseNode):
             await self._backend.close()
 
     async def run(self) -> None:
-        if not self._subscriptions:
-            await asyncio.sleep(1)
+        packet = await self._wait_any(self._subscriptions)
+        if packet is None:
             return
-
-        tasks = [asyncio.create_task(sub.get()) for sub in self._subscriptions]
-        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-        for t in pending:
-            t.cancel()
-
-        packet: IntelPacket = next(iter(done)).result()
         if self._backend:
             await self._backend.save(packet)
             log.debug("node %s stored packet %s", self.node_id, packet.packet_id)

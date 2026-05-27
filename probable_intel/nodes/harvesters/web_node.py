@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 import httpx
 
 from ..base import BaseNode
-from ...spine.packet import IntelPacket, Priority, TrustLevel
+from ...spine.packet import IntelPacket, TrustLevel
 
 if TYPE_CHECKING:
     from ...nexus.spec import NodeSpec
@@ -35,8 +35,6 @@ class WebNode(BaseNode):
         super().__init__(spec, spine)
         self._targets: list[dict] = []
         self._interval_seconds: int = 3600
-        self._emit_channel: str = ""
-        self._emit_priority: Priority = Priority.NORMAL
         self._seen: set[str] = set()
         self._client: httpx.AsyncClient | None = None
 
@@ -44,9 +42,6 @@ class WebNode(BaseNode):
         self._targets = [t for t in self.spec.targets if t.get("type") == "web"]
         if self.spec.schedule and self.spec.schedule.interval_seconds:
             self._interval_seconds = self.spec.schedule.interval_seconds
-        if self.spec.emit:
-            self._emit_channel = self.spec.emit.channel
-            self._emit_priority = Priority[self.spec.emit.priority.upper()]
         self._client = httpx.AsyncClient(
             headers=_DEFAULT_HEADERS,
             follow_redirects=True,

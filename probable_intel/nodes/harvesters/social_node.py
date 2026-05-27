@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 import httpx
 
 from ..base import BaseNode
-from ...spine.packet import IntelPacket, Priority, TrustLevel
+from ...spine.packet import IntelPacket, TrustLevel
 
 if TYPE_CHECKING:
     from ...nexus.spec import NodeSpec
@@ -37,8 +37,6 @@ class SocialNode(BaseNode):
         self._keywords: list[str] = []
         self._exclude_keywords: list[str] = []
         self._min_word_count: int = 0
-        self._emit_channel: str = ""
-        self._emit_priority: Priority = Priority.NORMAL
         self._client: httpx.AsyncClient | None = None
         self._seen_urls: set[str] = set()
 
@@ -55,10 +53,6 @@ class SocialNode(BaseNode):
         self._keywords = [kw.lower() for kw in filters.get("keywords", [])]
         self._exclude_keywords = [kw.lower() for kw in filters.get("exclude_keywords", [])]
         self._min_word_count = filters.get("min_word_count", 0)
-
-        if self.spec.emit:
-            self._emit_channel = self.spec.emit.channel
-            self._emit_priority = Priority[self.spec.emit.priority.upper()]
 
         self._client = httpx.AsyncClient(
             follow_redirects=True,

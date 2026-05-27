@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 import httpx
 
 from ..base import BaseNode
-from ...spine.packet import IntelPacket, Priority, TrustLevel
+from ...spine.packet import IntelPacket, TrustLevel
 
 if TYPE_CHECKING:
     from ...nexus.spec import NodeSpec
@@ -73,8 +73,6 @@ class ApiNode(BaseNode):
         self._interval_seconds: int = 3600
         self._keywords: list[str] = []
         self._exclude_keywords: list[str] = []
-        self._emit_channel: str = ""
-        self._emit_priority: Priority = Priority.NORMAL
         self._client: httpx.AsyncClient | None = None
         self._seen_ids: set[str] = set()
 
@@ -91,10 +89,6 @@ class ApiNode(BaseNode):
         filters = self.spec.filters
         self._keywords = [kw.lower() for kw in filters.get("keywords", [])]
         self._exclude_keywords = [kw.lower() for kw in filters.get("exclude_keywords", [])]
-
-        if self.spec.emit:
-            self._emit_channel = self.spec.emit.channel
-            self._emit_priority = Priority[self.spec.emit.priority.upper()]
 
         self._client = httpx.AsyncClient(
             follow_redirects=True,

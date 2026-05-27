@@ -4,7 +4,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from ..base import BaseNode
-from ...spine.packet import IntelPacket, Priority, TrustLevel
+from ...spine.packet import IntelPacket, TrustLevel
 
 if TYPE_CHECKING:
     from ...nexus.spec import NodeSpec
@@ -22,8 +22,6 @@ class EntityExtractorNode(BaseNode):
         super().__init__(spec, spine)
         self._nlp = None
         self._subscriptions = []
-        self._emit_channel: str = ""
-        self._emit_priority: Priority = Priority.NORMAL
         self._confidence_min: float = 0.0
         self._llm_router = None
 
@@ -50,10 +48,6 @@ class EntityExtractorNode(BaseNode):
             except Exception as e:
                 log.warning("node %s: LLM setup failed: %s", self.node_id, e)
 
-        if self.spec.emit:
-            self._emit_channel = self.spec.emit.channel
-            self._emit_priority = Priority[self.spec.emit.priority.upper()]
-
         self._subscriptions = [
             self.spine.subscribe(ch) for ch in self.spec.subscribe_channels
         ]
@@ -64,19 +58,9 @@ class EntityExtractorNode(BaseNode):
             sub.close()
 
     async def run(self) -> None:
-        if not self._subscriptions:
-            import asyncio
-            await asyncio.sleep(1)
+        packet = await self._wait_any(self._subscriptions)
+        if packet is None:
             return
-
-        import asyncio
-
-        tasks = [asyncio.create_task(sub.get()) for sub in self._subscriptions]
-        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-        for t in pending:
-            t.cancel()
-
-        packet: IntelPacket = next(iter(done)).result()
         await self._process(packet)
 
     async def _process(self, packet: IntelPacket) -> None:

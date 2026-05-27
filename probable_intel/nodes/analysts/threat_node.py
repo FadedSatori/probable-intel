@@ -104,14 +104,9 @@ class ThreatAssessNode(BaseNode):
         super().__init__(spec, spine)
         self._rules: list[RuleSpec] = []
         self._subscriptions = []
-        self._emit_channel: str = ""
-        self._emit_priority: Priority = Priority.HIGH
 
     async def setup(self) -> None:
         self._rules = self.spec.rules
-        if self.spec.emit:
-            self._emit_channel = self.spec.emit.channel
-            self._emit_priority = Priority[self.spec.emit.priority.upper()]
         self._subscriptions = [
             self.spine.subscribe(ch) for ch in self.spec.subscribe_channels
         ]
@@ -121,16 +116,9 @@ class ThreatAssessNode(BaseNode):
             sub.close()
 
     async def run(self) -> None:
-        if not self._subscriptions:
-            await asyncio.sleep(1)
+        packet = await self._wait_any(self._subscriptions)
+        if packet is None:
             return
-
-        tasks = [asyncio.create_task(sub.get()) for sub in self._subscriptions]
-        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-        for t in pending:
-            t.cancel()
-
-        packet: IntelPacket = next(iter(done)).result()
         await self._assess(packet)
 
     async def _assess(self, packet: IntelPacket) -> None:

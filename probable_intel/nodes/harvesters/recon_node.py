@@ -10,7 +10,7 @@ from urllib.parse import quote_plus
 import httpx
 
 from ..base import BaseNode
-from ...spine.packet import IntelPacket, Priority, TrustLevel
+from ...spine.packet import IntelPacket, TrustLevel
 
 if TYPE_CHECKING:
     from ...nexus.spec import NodeSpec
@@ -45,8 +45,6 @@ class ReconNode(BaseNode):
     def __init__(self, spec: "NodeSpec", spine: "Spine") -> None:
         super().__init__(spec, spine)
         self._subscriptions: list = []
-        self._emit_channel: str = ""
-        self._emit_priority: Priority = Priority.NORMAL
         self._min_degree: int = 2
         self._max_per_run: int = 5
         self._cooldown_seconds: float = 6 * 3600
@@ -63,10 +61,6 @@ class ReconNode(BaseNode):
         self._max_per_run = int(cfg.get("max_entities_per_run", 5))
         self._cooldown_seconds = float(cfg.get("cooldown_hours", 6)) * 3600
         self._feed_node_id = str(cfg.get("feed_node_id", ""))
-
-        if self.spec.emit:
-            self._emit_channel = self.spec.emit.channel
-            self._emit_priority = Priority[self.spec.emit.priority.upper()]
 
         self._client = httpx.AsyncClient(
             follow_redirects=True,
@@ -104,16 +98,9 @@ class ReconNode(BaseNode):
             await self._client.aclose()
 
     async def run(self) -> None:
-        if not self._subscriptions:
-            await asyncio.sleep(5)
+        packet = await self._wait_any(self._subscriptions)
+        if packet is None:
             return
-
-        tasks = [asyncio.create_task(sub.get()) for sub in self._subscriptions]
-        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-        for t in pending:
-            t.cancel()
-
-        packet: IntelPacket = next(iter(done)).result()
         await self._process_summary(packet)
 
     async def _process_summary(self, packet: IntelPacket) -> None:
