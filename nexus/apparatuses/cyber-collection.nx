@@ -88,7 +88,7 @@ nodes:
   - type: SentimentNode
     id: "analyst.sentiment.cyber"
     subscribe:
-      channels: ["raw.feed.cyber", "raw.api.cve", "raw.social.cyber"]
+      channels: ["raw.feed.cyber", "raw.api.cve", "raw.social.cyber", "raw.recon.cyber"]
     backend:
       primary: "vader"
       fallback: "llm"
@@ -176,11 +176,24 @@ nodes:
       channel: "analysis.kg.summary"
       priority: low
 
+  - type: ReconNode
+    id: "recon.entities.cyber"
+    subscribe:
+      channels: ["analysis.kg.summary"]
+    config:
+      min_entity_degree: 3
+      max_entities_per_run: 5
+      cooldown_hours: 6
+    emit:
+      channel: "raw.recon.cyber"
+      priority: normal
+
   - type: StorageNode
     id: "archivist.storage.cyber"
     subscribe:
       channels:
         - "raw.api.cve"
+        - "raw.recon.cyber"
         - "analysis.sentiment.cyber"
         - "analysis.entities.cyber"
         - "analysis.kg.summary"
