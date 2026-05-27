@@ -51,6 +51,7 @@ class WebNode(BaseNode):
             headers=_DEFAULT_HEADERS,
             follow_redirects=True,
             timeout=30,
+            trust_env=True,
         )
 
     async def teardown(self) -> None:

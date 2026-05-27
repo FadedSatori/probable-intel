@@ -69,6 +69,7 @@ class ReconNode(BaseNode):
         self._client = httpx.AsyncClient(
             follow_redirects=True,
             timeout=20.0,
+            trust_env=True,
             headers={
                 "User-Agent": _BROWSER_UA,
                 "Accept": "application/rss+xml, application/xml, */*;q=0.8",

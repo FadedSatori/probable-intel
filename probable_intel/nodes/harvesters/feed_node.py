@@ -39,6 +39,7 @@ class FeedNode(BaseNode):
         self._client = httpx.AsyncClient(
             follow_redirects=True,
             timeout=30,
+            trust_env=True,
             headers={
                 "User-Agent": (
                     "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) "
