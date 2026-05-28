@@ -48,14 +48,19 @@ class Channel:
                 return packet
         # all empty — wait on any queue via asyncio.wait
         tasks = {p: asyncio.ensure_future(q.get()) for p, q in self._queues.items()}
-        done, pending = await asyncio.wait(
-            tasks.values(), return_when=asyncio.FIRST_COMPLETED
-        )
-        for t in pending:
-            t.cancel()
-        packet = next(iter(done)).result()
-        self.metrics.consumed += 1
-        return packet
+        try:
+            done, pending = await asyncio.wait(
+                tasks.values(), return_when=asyncio.FIRST_COMPLETED
+            )
+            for t in pending:
+                t.cancel()
+            packet = next(iter(done)).result()
+            self.metrics.consumed += 1
+            return packet
+        except asyncio.CancelledError:
+            for t in tasks.values():
+                t.cancel()
+            raise
 
     def depth(self) -> int:
         return sum(q.qsize() for q in self._queues.values())

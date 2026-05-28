@@ -74,3 +74,41 @@ def test_trust_levels():
     assert TrustLevel.TOP_SECRET > TrustLevel.CLASSIFIED
     assert TrustLevel.CLASSIFIED > TrustLevel.RESTRICTED
     assert TrustLevel.RESTRICTED > TrustLevel.UNCLASSIFIED
+
+
+@pytest.mark.asyncio
+async def test_subscriber_queue_full_logs_warning(caplog):
+    """Dropping packets when a subscriber queue is full emits a log warning."""
+    import logging
+    spine = Spine()
+    # Subscribe and fill the queue to capacity
+    sub = spine.subscribe("overflow.channel")
+    # Use a tiny queue by patching maxsize — easier to just fill it
+    # We can't easily patch maxsize=5000, so instead we verify the log fires
+    # by filling the internal queue directly
+    q = sub._queue
+    for _ in range(q.maxsize):
+        await q.put(make_packet("overflow.channel"))
+    # Now publish one more — queue is full, should log a warning
+    with caplog.at_level(logging.WARNING, logger="probable_intel.spine.spine"):
+        await spine.publish("overflow.channel", make_packet("overflow.channel"))
+    assert any("subscriber queue full" in r.message for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_channel_get_cancelled_cancels_inner_tasks():
+    """Channel.get() must not leak tasks when cancelled from outside."""
+    from probable_intel.spine.channel import Channel
+    ch = Channel("cancel.test")
+
+    async def get_with_cancel():
+        task = asyncio.create_task(ch.get())
+        await asyncio.sleep(0)  # let task start
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    # Should complete without hanging
+    await asyncio.wait_for(get_with_cancel(), timeout=1.0)

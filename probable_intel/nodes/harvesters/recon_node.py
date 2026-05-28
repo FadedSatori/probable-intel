@@ -155,12 +155,18 @@ class ReconNode(BaseNode):
         self, query: str, entity: dict[str, Any], trigger: IntelPacket
     ) -> int:
         url = _GNEWS_RSS.format(query=quote_plus(query))
+        if self._cb_check(url):
+            log.debug("node %s: circuit open for google-news-rss — skipping", self.node_id)
+            return 0
         try:
             resp = await self._client.get(url)
             resp.raise_for_status()
-            return await self._parse_and_emit(resp.content, entity, trigger)
+            result = await self._parse_and_emit(resp.content, entity, trigger)
+            self._cb_success(url)
+            return result
         except Exception as e:
             log.debug("node %s: recon search failed for %r: %s", self.node_id, query, e)
+            self._cb_failure(url)
             return 0
 
     async def _parse_and_emit(

@@ -112,13 +112,20 @@ class SocialNode(BaseNode):
         url = "https://hn.algolia.com/api/v1/search"
         params = {"query": query, "tags": "story", "hitsPerPage": 20}
 
+        if self._cb_check(url):
+            log.debug("node %s: circuit open for hackernews — skipping", self.node_id)
+            return
+
         try:
             resp = await self._client.get(url, params=params)
             resp.raise_for_status()
             data = resp.json()
         except Exception as e:
             log.error("node %s: HackerNews fetch failed: %s", self.node_id, e)
+            self._cb_failure(url)
             return
+
+        self._cb_success(url)
 
         for hit in data.get("hits", []):
             hn_url = hit.get("url") or f"https://news.ycombinator.com/item?id={hit.get('objectID', '')}"
@@ -150,13 +157,20 @@ class SocialNode(BaseNode):
         else:
             url = f"https://{instance}/api/v1/timelines/public?limit=20&local=true"
 
+        if self._cb_check(url):
+            log.debug("node %s: circuit open for mastodon:%s — skipping", self.node_id, instance)
+            return
+
         try:
             resp = await self._client.get(url)
             resp.raise_for_status()
             statuses = resp.json()
         except Exception as e:
             log.error("node %s: Mastodon fetch failed %s: %s", self.node_id, instance, e)
+            self._cb_failure(url)
             return
+
+        self._cb_success(url)
 
         for status in statuses:
             post_url = status.get("url", "")

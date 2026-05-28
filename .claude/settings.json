@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m pytest*)",
+      "Bash(pi validate*)",
+      "Bash(pi run*)",
+      "Bash(pi watch*)",
+      "Bash(ruff check*)",
+      "Bash(mypy probable_intel/*)",
+      "Bash(git log*)",
+      "Bash(git diff*)",
+      "Bash(git status*)",
+      "Bash(git show*)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '=== probable-intel ===' && python -m pytest tests/unit/ -q --tb=no 2>&1 | tail -3 && python -m probable_intel.cli.main validate nexus/apparatuses/mvp-demo.nx 2>&1 | tail -2"
+          }
+        ]
+      }
+    ]
+  }
+}

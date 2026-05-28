@@ -75,12 +75,17 @@ class FeedNode(BaseNode):
     async def _fetch_feed(self, url: str) -> None:
         import atoma
 
+        if self._cb_check(url):
+            log.debug("node %s: circuit open for %s — skipping", self.node_id, url)
+            return
+
         try:
             resp = await self._client.get(url)
             resp.raise_for_status()
             raw = resp.content
         except Exception as e:
             log.error("node %s: failed to fetch %s: %s", self.node_id, url, e)
+            self._cb_failure(url)
             return
 
         try:
@@ -92,7 +97,10 @@ class FeedNode(BaseNode):
                 entries = feed.entries
             except Exception as e:
                 log.error("node %s: failed to parse feed %s: %s", self.node_id, url, e)
+                self._cb_failure(url)
                 return
+
+        self._cb_success(url)
 
         for entry in entries:
             content = self._extract_content(entry)

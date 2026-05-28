@@ -134,6 +134,10 @@ class ApiNode(BaseNode):
         if not url:
             return
 
+        if self._cb_check(url):
+            log.debug("node %s: circuit open for %s — skipping", self.node_id, url)
+            return
+
         params = dict(target.get("params", {}))
         headers: dict[str, str] = {}
 
@@ -156,7 +160,10 @@ class ApiNode(BaseNode):
             data = resp.json()
         except Exception as e:
             log.error("node %s: API fetch failed %s: %s", self.node_id, url, e)
+            self._cb_failure(url)
             return
+
+        self._cb_success(url)
 
         response_path = target.get("response_path", "")
         items = _dig(data, response_path) if response_path else data

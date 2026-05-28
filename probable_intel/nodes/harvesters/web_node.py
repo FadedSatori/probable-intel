@@ -63,13 +63,18 @@ class WebNode(BaseNode):
 
     async def _fetch(self, target: dict) -> None:
         url = target["url"]
+        if self._cb_check(url):
+            log.debug("node %s: circuit open for %s — skipping", self.node_id, url)
+            return
         try:
             assert self._client is not None
             resp = await self._client.get(url)
             resp.raise_for_status()
         except Exception as e:
             log.warning("node %s: fetch failed %s: %s", self.node_id, url, e)
+            self._cb_failure(url)
             return
+        self._cb_success(url)
 
         content_hash = hashlib.sha256(resp.content).hexdigest()[:16]
         if content_hash in self._seen:
