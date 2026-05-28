@@ -133,9 +133,20 @@ class Hub:
                     node._keywords.add(kw)  # type: ignore[attr-defined]
                     log.info("hub: added keyword filter %r to %s", kw, target_id)
 
-            elif dtype == "expand_collection" and hasattr(node, "_interval"):
-                node._interval = max(30.0, node._interval * 0.5)  # type: ignore[attr-defined]
-                log.info("hub: expanded collection on %s → interval %.0fs", target_id, node._interval)
+            elif dtype == "expand_collection":
+                # Increase polling frequency
+                for attr in ("_interval_seconds", "_interval"):
+                    if hasattr(node, attr):
+                        cur = getattr(node, attr)
+                        setattr(node, attr, max(30, int(cur * 0.5)))
+                        log.info("hub: expanded collection on %s → interval %ds", target_id, max(30, int(cur * 0.5)))
+                        break
+                # Inject a new URL target if provided
+                new_url = str(params.get("url", ""))
+                if new_url and hasattr(node, "_feed_urls"):
+                    if new_url not in node._feed_urls:  # type: ignore[attr-defined]
+                        node._feed_urls.append(new_url)  # type: ignore[attr-defined]
+                        log.info("hub: injected feed URL into %s: %s", target_id, new_url)
 
             elif dtype == "pause_channel":
                 node._paused_until = time.time() + ttl

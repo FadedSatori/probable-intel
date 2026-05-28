@@ -15,6 +15,7 @@ def _lazy_imports() -> dict[str, type[BaseNode]]:
     from ..nodes.harvesters.web_node import WebNode
     from ..nodes.harvesters.api_node import ApiNode
     from ..nodes.harvesters.social_node import SocialNode
+    from ..nodes.harvesters.recon_node import ReconNode
     from ..nodes.analysts.sentiment_node import SentimentNode
     from ..nodes.analysts.entity_node import EntityExtractorNode
     from ..nodes.analysts.threat_node import ThreatAssessNode
@@ -34,6 +35,7 @@ def _lazy_imports() -> dict[str, type[BaseNode]]:
         "WebNode": WebNode,
         "ApiNode": ApiNode,
         "SocialNode": SocialNode,
+        "ReconNode": ReconNode,
         "SentimentNode": SentimentNode,
         "EntityExtractorNode": EntityExtractorNode,
         "ThreatAssessNode": ThreatAssessNode,

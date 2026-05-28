@@ -7,7 +7,7 @@ from collections import deque
 from typing import TYPE_CHECKING
 
 from ..base import BaseNode
-from ...spine.packet import IntelPacket, Priority
+from ...spine.packet import IntelPacket
 
 if TYPE_CHECKING:
     from ...nexus.spec import NodeSpec
@@ -40,8 +40,6 @@ class NarrativeNode(BaseNode):
     def __init__(self, spec: "NodeSpec", spine: "Spine") -> None:
         super().__init__(spec, spine)
         self._subscriptions: list = []
-        self._emit_channel: str = ""
-        self._emit_priority: Priority = Priority.NORMAL
         self._llm_router = None
         self._window: deque = deque()
         self._window_size: int = 10
@@ -67,10 +65,6 @@ class NarrativeNode(BaseNode):
         self._emit_interval = float(cfg.get("emit_interval_seconds", 300))
         self._window = deque(maxlen=self._window_size)
 
-        if self.spec.emit:
-            self._emit_channel = self.spec.emit.channel
-            self._emit_priority = Priority[self.spec.emit.priority.upper()]
-
         self._subscriptions = [
             self.spine.subscribe(ch) for ch in self.spec.subscribe_channels
         ]
@@ -81,16 +75,9 @@ class NarrativeNode(BaseNode):
             sub.close()
 
     async def run(self) -> None:
-        if not self._subscriptions:
-            await asyncio.sleep(1)
+        packet = await self._wait_any(self._subscriptions)
+        if packet is None:
             return
-
-        tasks = [asyncio.create_task(sub.get()) for sub in self._subscriptions]
-        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-        for t in pending:
-            t.cancel()
-
-        packet: IntelPacket = next(iter(done)).result()
         text = packet.payload.get("content") or packet.payload.get("body") or packet.payload.get("summary", "")
         if text:
             self._window.append({
@@ -141,5 +128,9 @@ class NarrativeNode(BaseNode):
             },
             priority=self._emit_priority,
         )
+        # Credit all window source nodes in provenance, not just the trigger packet
+        for src in {item["source"] for item in items}:
+            if src not in out.provenance:
+                out.provenance.append(src)
         await self.emit(self._emit_channel, out)
         log.info("node %s: narrative emitted (%d sources)", self.node_id, len(items))

@@ -27,7 +27,7 @@ nodes:
   - type: SentimentNode
     id: "analyst.sentiment.security"
     subscribe:
-      channels: ["raw.feed.security"]
+      channels: ["raw.feed.security", "raw.recon.security"]
     backend:
       primary: "vader"
       fallback: "llm"
@@ -93,6 +93,18 @@ nodes:
     emit:
       channel: "analysis.kg.summary"
       priority: low
+
+  - type: ReconNode
+    id: "recon.entities.security"
+    subscribe:
+      channels: ["analysis.kg.summary"]
+    config:
+      min_entity_degree: 2
+      max_entities_per_run: 3
+      cooldown_hours: 6
+    emit:
+      channel: "raw.recon.security"
+      priority: normal
 
   - type: AlertNode
     id: "sentinel.alert.security"

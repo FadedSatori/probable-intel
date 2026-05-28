@@ -224,6 +224,7 @@ Local providers (Ollama, vLLM) require no API key — set `base_url` in the `llm
 | Harvester | `WebNode` | Web page scraping (Playwright-capable) |
 | Harvester | `ApiNode` | Authenticated JSON REST APIs (NVD, CIRCL, etc.) |
 | Harvester | `SocialNode` | Reddit, HackerNews, Mastodon |
+| Harvester | `ReconNode` | Autonomous OSINT expansion via KG entity leads |
 | Analyst | `SentimentNode` | VADER + LLM fallback |
 | Analyst | `EntityExtractorNode` | spaCy NER + LLM fallback |
 | Analyst | `ThreatAssessNode` | Rule-based threat scoring |
@@ -247,4 +248,4 @@ Local providers (Ollama, vLLM) require no API key — set `base_url` in the `llm
 - Semantic memory layer (vector embeddings + similarity retrieval)
 - Predictive threat modeling (time-series over KG history)
 - MITRE ATT&CK mapping + STIX 2.1 export
-- Autonomous OSINT expansion (ReconNode, DarkWebNode)
+- Autonomous OSINT expansion via dark web sources (DarkWebNode)

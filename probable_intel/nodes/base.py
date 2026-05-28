@@ -7,10 +7,11 @@ from abc import ABC, abstractmethod
 from enum import auto, Enum
 from typing import TYPE_CHECKING
 
+from ..spine.packet import IntelPacket, Priority
+
 if TYPE_CHECKING:
     from ..nexus.spec import NodeSpec
     from ..spine.spine import Spine
-    from ..spine.packet import IntelPacket
 
 log = logging.getLogger(__name__)
 
@@ -41,6 +42,13 @@ class BaseNode(ABC):
         self._last_heartbeat = 0.0
         self._stop_event = asyncio.Event()
         self._paused_until: float = 0.0  # set by Hub directive to pause this node
+        self._target_errors: dict[str, int] = {}    # key → consecutive error count
+        self._circuit_open: dict[str, float] = {}   # key → open_until timestamp
+        # Emit config — every node reads spec.emit once here; override in setup() if needed
+        self._emit_channel: str = spec.emit.channel if spec.emit else ""
+        self._emit_priority: Priority = (
+            Priority[spec.emit.priority.upper()] if spec.emit else Priority.NORMAL
+        )
 
     # ── lifecycle ──────────────────────────────────────────────────────────
 
@@ -130,8 +138,51 @@ class BaseNode(ABC):
 
     # ── helpers ────────────────────────────────────────────────────────────
 
-    async def emit(self, channel: str, packet: "IntelPacket") -> None:
+    async def emit(self, channel: str, packet: IntelPacket) -> None:
         await self.spine.publish(channel, packet)
+
+    async def _wait_any(self, subscriptions: list) -> IntelPacket | None:
+        """Block until any subscribed channel delivers a packet.
+
+        Returns None (after a 1-second sleep) when subscriptions is empty, so
+        callers can do ``if (packet := await self._wait_any(...)) is None: return``
+        and the run loop will yield control without busy-spinning.
+        """
+        if not subscriptions:
+            await asyncio.sleep(1.0)
+            return None
+        tasks = [asyncio.create_task(sub.get()) for sub in subscriptions]
+        try:
+            done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            for t in pending:
+                t.cancel()
+            return next(iter(done)).result()
+        except asyncio.CancelledError:
+            for t in tasks:
+                t.cancel()
+            raise
+
+    # ── per-target circuit breaker ─────────────────────────────────────────
+
+    def _cb_check(self, key: str) -> bool:
+        """Return True if the circuit is open (caller should skip this target)."""
+        return time.time() < self._circuit_open.get(key, 0.0)
+
+    def _cb_success(self, key: str) -> None:
+        self._target_errors.pop(key, None)
+        self._circuit_open.pop(key, None)
+
+    def _cb_failure(
+        self, key: str, *, max_errors: int = 5, open_seconds: float = 300.0
+    ) -> None:
+        count = self._target_errors.get(key, 0) + 1
+        self._target_errors[key] = count
+        if count >= max_errors:
+            self._circuit_open[key] = time.time() + open_seconds
+            log.warning(
+                "node %s: circuit open for %r (%.0fs) after %d consecutive errors",
+                self.node_id, key, open_seconds, count,
+            )
 
     def health(self) -> dict:
         return {

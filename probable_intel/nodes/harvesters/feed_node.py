@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 import httpx
 
 from ..base import BaseNode
-from ...spine.packet import IntelPacket, Priority, TrustLevel
+from ...spine.packet import IntelPacket, TrustLevel
 
 if TYPE_CHECKING:
     from ...nexus.spec import NodeSpec
@@ -30,8 +30,6 @@ class FeedNode(BaseNode):
         self._keywords: list[str] = []
         self._exclude_keywords: list[str] = []
         self._min_word_count: int = 0
-        self._emit_channel: str = ""
-        self._emit_priority: Priority = Priority.NORMAL
         self._client: httpx.AsyncClient | None = None
 
     async def setup(self) -> None:
@@ -39,7 +37,16 @@ class FeedNode(BaseNode):
         self._client = httpx.AsyncClient(
             follow_redirects=True,
             timeout=30,
-            headers={"User-Agent": "probable-intel/0.1 feed-reader"},
+            trust_env=True,
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) "
+                    "Gecko/20100101 Firefox/128.0"
+                ),
+                "Accept": "application/rss+xml, application/atom+xml, application/xml;q=0.9, */*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.5",
+                "Cache-Control": "no-cache",
+            },
         )
         if not self._feed_urls:
             log.warning("node %s: no feed targets configured", self.node_id)
@@ -51,10 +58,6 @@ class FeedNode(BaseNode):
         self._keywords = [kw.lower() for kw in filters.get("keywords", [])]
         self._exclude_keywords = [kw.lower() for kw in filters.get("exclude_keywords", [])]
         self._min_word_count = filters.get("min_word_count", 0)
-
-        if self.spec.emit:
-            self._emit_channel = self.spec.emit.channel
-            self._emit_priority = Priority[self.spec.emit.priority.upper()]
 
     async def teardown(self) -> None:
         if self._client:
@@ -72,12 +75,17 @@ class FeedNode(BaseNode):
     async def _fetch_feed(self, url: str) -> None:
         import atoma
 
+        if self._cb_check(url):
+            log.debug("node %s: circuit open for %s — skipping", self.node_id, url)
+            return
+
         try:
             resp = await self._client.get(url)
             resp.raise_for_status()
             raw = resp.content
         except Exception as e:
             log.error("node %s: failed to fetch %s: %s", self.node_id, url, e)
+            self._cb_failure(url)
             return
 
         try:
@@ -89,7 +97,10 @@ class FeedNode(BaseNode):
                 entries = feed.entries
             except Exception as e:
                 log.error("node %s: failed to parse feed %s: %s", self.node_id, url, e)
+                self._cb_failure(url)
                 return
+
+        self._cb_success(url)
 
         for entry in entries:
             content = self._extract_content(entry)

@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 import httpx
 
 from ..base import BaseNode
-from ...spine.packet import IntelPacket, Priority, TrustLevel
+from ...spine.packet import IntelPacket, TrustLevel
 
 if TYPE_CHECKING:
     from ...nexus.spec import NodeSpec
@@ -18,7 +18,10 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-_REDDIT_UA = "probable-intel/0.1 (social collector; +https://github.com/probable-intel)"
+_BROWSER_UA = (
+    "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) "
+    "Gecko/20100101 Firefox/128.0"
+)
 
 
 class SocialNode(BaseNode):
@@ -34,8 +37,6 @@ class SocialNode(BaseNode):
         self._keywords: list[str] = []
         self._exclude_keywords: list[str] = []
         self._min_word_count: int = 0
-        self._emit_channel: str = ""
-        self._emit_priority: Priority = Priority.NORMAL
         self._client: httpx.AsyncClient | None = None
         self._seen_urls: set[str] = set()
 
@@ -53,14 +54,15 @@ class SocialNode(BaseNode):
         self._exclude_keywords = [kw.lower() for kw in filters.get("exclude_keywords", [])]
         self._min_word_count = filters.get("min_word_count", 0)
 
-        if self.spec.emit:
-            self._emit_channel = self.spec.emit.channel
-            self._emit_priority = Priority[self.spec.emit.priority.upper()]
-
         self._client = httpx.AsyncClient(
             follow_redirects=True,
             timeout=30,
-            headers={"User-Agent": _REDDIT_UA},
+            trust_env=True,
+            headers={
+                "User-Agent": _BROWSER_UA,
+                "Accept": "application/json, */*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.5",
+            },
         )
 
     async def teardown(self) -> None:
@@ -90,42 +92,18 @@ class SocialNode(BaseNode):
     # ── Reddit ────────────────────────────────────────────────────────────────
 
     async def _fetch_reddit(self, target: dict[str, Any]) -> None:
+        """Reddit's public JSON API requires OAuth since June 2023.
+
+        Use FeedNode with https://www.reddit.com/r/<subreddit>/.rss instead,
+        which works without authentication. This method is kept for backwards
+        compatibility but logs a one-time warning and is a no-op.
+        """
         subreddit = target.get("subreddit", "")
-        if not subreddit:
-            log.warning("node %s: reddit target missing subreddit", self.node_id)
-            return
-
-        url = f"https://www.reddit.com/r/{subreddit}/new.json?limit=25"
-        try:
-            resp = await self._client.get(url)
-            resp.raise_for_status()
-            data = resp.json()
-        except Exception as e:
-            log.error("node %s: reddit fetch failed %s: %s", self.node_id, subreddit, e)
-            return
-
-        posts = data.get("data", {}).get("children", [])
-        for post in posts:
-            p = post.get("data", {})
-            permalink = f"https://www.reddit.com{p.get('permalink', '')}"
-            title = p.get("title", "")
-            selftext = p.get("selftext", "")
-            content = f"{title}\n{selftext}".strip()
-
-            await self._maybe_emit(
-                url=permalink,
-                title=title,
-                content=content,
-                author=f"u/{p.get('author', 'unknown')}",
-                source="reddit",
-                extra={
-                    "subreddit": subreddit,
-                    "score": p.get("score", 0),
-                    "published": datetime.fromtimestamp(
-                        p.get("created_utc", 0), tz=timezone.utc
-                    ).isoformat(),
-                },
-            )
+        log.warning(
+            "node %s: Reddit JSON API requires OAuth (disabled since 2023). "
+            "Use FeedNode with target feed: https://www.reddit.com/r/%s/.rss instead.",
+            self.node_id, subreddit or "<subreddit>",
+        )
 
     # ── HackerNews ────────────────────────────────────────────────────────────
 
@@ -134,13 +112,20 @@ class SocialNode(BaseNode):
         url = "https://hn.algolia.com/api/v1/search"
         params = {"query": query, "tags": "story", "hitsPerPage": 20}
 
+        if self._cb_check(url):
+            log.debug("node %s: circuit open for hackernews — skipping", self.node_id)
+            return
+
         try:
             resp = await self._client.get(url, params=params)
             resp.raise_for_status()
             data = resp.json()
         except Exception as e:
             log.error("node %s: HackerNews fetch failed: %s", self.node_id, e)
+            self._cb_failure(url)
             return
+
+        self._cb_success(url)
 
         for hit in data.get("hits", []):
             hn_url = hit.get("url") or f"https://news.ycombinator.com/item?id={hit.get('objectID', '')}"
@@ -172,13 +157,20 @@ class SocialNode(BaseNode):
         else:
             url = f"https://{instance}/api/v1/timelines/public?limit=20&local=true"
 
+        if self._cb_check(url):
+            log.debug("node %s: circuit open for mastodon:%s — skipping", self.node_id, instance)
+            return
+
         try:
             resp = await self._client.get(url)
             resp.raise_for_status()
             statuses = resp.json()
         except Exception as e:
             log.error("node %s: Mastodon fetch failed %s: %s", self.node_id, instance, e)
+            self._cb_failure(url)
             return
+
+        self._cb_success(url)
 
         for status in statuses:
             post_url = status.get("url", "")

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections import defaultdict
 from typing import AsyncIterator, Callable, Awaitable
 
@@ -11,12 +12,16 @@ from .packet import IntelPacket
 log = logging.getLogger(__name__)
 
 
+_DROP_LOG_INTERVAL = 60.0  # log at most once per minute per channel
+
+
 class Spine:
     """In-process async message bus. Swap for RedisSpine to go distributed."""
 
     def __init__(self) -> None:
         self._channels: dict[str, Channel] = {}
         self._subscribers: dict[str, list[asyncio.Queue[IntelPacket]]] = defaultdict(list)
+        self._last_drop_log: dict[str, float] = {}  # channel → last warning timestamp
 
     def _ensure_channel(self, name: str) -> Channel:
         if name not in self._channels:
@@ -32,6 +37,16 @@ class Spine:
         for sub_queue in self._subscribers.get(channel_name, []):
             if not sub_queue.full():
                 await sub_queue.put(packet)
+            else:
+                ch.metrics.dropped += 1
+                now = time.time()
+                if now - self._last_drop_log.get(channel_name, 0.0) >= _DROP_LOG_INTERVAL:
+                    self._last_drop_log[channel_name] = now
+                    log.warning(
+                        "spine: subscriber queue full on %r — dropping packets"
+                        " (total drops on channel: %d)",
+                        channel_name, ch.metrics.dropped,
+                    )
 
     def subscribe(self, channel_name: str) -> "SpineSubscription":
         q: asyncio.Queue[IntelPacket] = asyncio.Queue(maxsize=5_000)
