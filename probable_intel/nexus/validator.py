@@ -106,7 +106,6 @@ class ApparatusValidator:
 
         for node in spec.nodes:
             if node.emits_channel:
-                # In future: channel-level trust annotations; for now just validate apparatus level
+                # TODO: channel-level trust annotations; cross-apparatus trust checks
+                # (apparatus_trust available for validation)
                 pass
-            # Nodes that subscribe to external channels at higher trust are flagged
-            _ = apparatus_trust  # placeholder for future cross-apparatus trust checks
