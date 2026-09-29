@@ -7,18 +7,6 @@ Run `/sprint` to pick up and fully execute the next unchecked item.
 
 ## In Progress
 
-- [ ] **Reliability hardening — complete**
-  Finish wiring circuit breaker into all harvesters; fix lifecycle concurrent-restart race; fix ChannelMetrics.dropped counting; rate-limit drop warning logs.
-  Files: `base.py`, `feed_node.py`, `api_node.py`, `social_node.py`, `web_node.py`, `recon_node.py`, `spine/spine.py`, `hub/lifecycle.py`
-  Decision: circuit breaker lives on BaseNode (_cb_check/_cb_success/_cb_failure) — all harvesters inherit it, none re-implement their own
-  Decision: lifecycle.restart() uses `_restarting: set[str]` guard — not a lock, not asyncio.Lock (this is single-threaded asyncio)
-  Decision: drop warning rate-limited to once per 60s per channel via `_last_drop_log` dict; always increment `ch.metrics.dropped` for observability
-  Verify: `python -m pytest tests/ -q` (110+ tests pass)
-
----
-
-## Sprint Queue (ordered by value/complexity)
-
 - [ ] **Redis Spine adapter**
   Replace asyncio.Queue with Redis Streams for multi-process scale-out. Enables running harvesters and analysts in separate processes.
   Files: `probable_intel/spine/redis_spine.py` (new), `probable_intel/nexus/spec.py` (add SpineSpec), `probable_intel/nexus/parser.py` (parse `spine:` block)
@@ -28,6 +16,10 @@ Run `/sprint` to pick up and fully execute the next unchecked item.
   Config: `spine: {backend: redis, url: "redis://localhost:6379"}` in apparatus file.
   Why: horizontal scaling and process isolation without changing any node code.
   Verify: `python -m pytest tests/unit/test_spine.py -v` + integration test with mock Redis
+
+---
+
+## Sprint Queue (ordered by value/complexity)
 
 - [ ] **Semantic memory layer — vector search over stored packets**
   Add similarity retrieval so operators can query "find threats similar to this CVE description". Built on top of StorageNode.
@@ -78,6 +70,10 @@ Run `/sprint` to pick up and fully execute the next unchecked item.
 ---
 
 ## Completed
+
+- [x] **Reliability hardening — complete**
+  Wired circuit breaker into all harvesters; fixed lifecycle concurrent-restart race; fixed ChannelMetrics.dropped counting; rate-limited drop warning logs.
+  Status: All 5 harvesters (FeedNode, ApiNode, SocialNode, WebNode, ReconNode) now inherit and use circuit breaker from BaseNode. Lifecycle restart guard prevents concurrent restart races. Spine metrics accurately track queue drops with rate-limited warnings.
 
 - [x] Core infrastructure — Spine, IntelPacket, BaseNode, NEXUS DSL parser/validator/loader, Hub, NodeRegistry, lifecycle, HealthMonitor, NodeFactory, HubAPI, CLI (`pi validate/run/watch/status`)
 - [x] Harvester nodes — FeedNode (RSS/Atom), WebNode (httpx scraper), ApiNode (REST + presets: NVD, CIRCL, GreyNoise), SocialNode (Reddit/HackerNews/Mastodon), ReconNode (autonomous OSINT via Google News RSS)
