@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from probable_intel.nodes.analysts.sentiment_node import SentimentNode
 from probable_intel.spine.packet import IntelPacket, Priority, TrustLevel
 from probable_intel.spine.spine import Spine
-from probable_intel.nexus.spec import NodeSpec, EmitSpec, LLMSpec, BackendSpec
+from probable_intel.nexus.spec import NodeSpec, EmitSpec, LLMSpec
 
 
 @pytest.fixture
@@ -28,7 +28,7 @@ def node_spec_vader_only():
         subscribe_channels=["raw.feed"],
         emit=EmitSpec(channel="sentiment.output", priority="normal"),
         llm=None,
-        backend=BackendSpec(name="vader", config={"llm_threshold": 0.4}),
+        backend={"llm_threshold": 0.4},
     )
 
 
@@ -46,7 +46,7 @@ def node_spec_with_llm():
             model="llama2",
             base_url="http://localhost:11434",
         ),
-        backend=BackendSpec(name="vader", config={"llm_threshold": 0.4}),
+        backend={"llm_threshold": 0.4},
     )
 
 
@@ -76,7 +76,7 @@ async def test_sentiment_node_vader_positive_sentiment(mock_spine, node_spec_vad
 
     assert emitted_packet.packet_type == "SentimentPacket"
     assert emitted_packet.payload["sentiment_score"] > 0.5
-    assert emitted_packet.payload["backend_used"] == "vader"
+    assert emitted_packet.payload["sentiment_backend"] == "vader"
 
     await node.teardown()
 
@@ -104,7 +104,7 @@ async def test_sentiment_node_vader_negative_sentiment(mock_spine, node_spec_vad
 
     assert emitted_packet.packet_type == "SentimentPacket"
     assert emitted_packet.payload["sentiment_score"] < -0.5
-    assert emitted_packet.payload["backend_used"] == "vader"
+    assert emitted_packet.payload["sentiment_backend"] == "vader"
 
     await node.teardown()
 
@@ -132,7 +132,7 @@ async def test_sentiment_node_vader_neutral_sentiment(mock_spine, node_spec_vade
 
     assert emitted_packet.packet_type == "SentimentPacket"
     assert -0.1 < emitted_packet.payload["sentiment_score"] < 0.1
-    assert emitted_packet.payload["backend_used"] == "vader"
+    assert emitted_packet.payload["sentiment_backend"] == "vader"
 
     await node.teardown()
 
@@ -143,20 +143,20 @@ async def test_sentiment_node_llm_fallback_on_low_confidence(mock_spine, node_sp
     node = SentimentNode(node_spec_with_llm, mock_spine)
 
     # Mock LLM router
-    with patch("probable_intel.nodes.analysts.sentiment_node.LLMRouter") as mock_llm_class:
+    with patch("probable_intel.llm.router.LLMRouter") as mock_llm_class:
         mock_llm_router = AsyncMock()
         mock_llm_router.complete = AsyncMock(return_value="0.75")
         mock_llm_class.from_spec.return_value = mock_llm_router
 
         await node.setup()
 
-        # Ambiguous text with low VADER confidence (|compound| < threshold)
+        # Neutral text with low VADER confidence (|compound| < threshold)
         packet = IntelPacket(
             packet_type="RawFeedPacket",
             source_node_id="feed.test",
             apparatus_id="test-apparatus",
             channel="raw.feed",
-            payload={"content": "The meeting was interesting.", "title": "Ambiguous"},
+            payload={"content": "The weather is neutral.", "title": "Neutral"},
             trust_level=TrustLevel.UNCLASSIFIED,
             priority=Priority.NORMAL,
         )
@@ -170,7 +170,7 @@ async def test_sentiment_node_llm_fallback_on_low_confidence(mock_spine, node_sp
         mock_spine.publish.assert_called_once()
         emitted_packet = mock_spine.publish.call_args[0][1]
         assert emitted_packet.payload["sentiment_score"] == 0.75
-        assert emitted_packet.payload["backend_used"] == "llm"
+        assert emitted_packet.payload["sentiment_backend"] == "llm"
 
         await node.teardown()
 
@@ -180,7 +180,7 @@ async def test_sentiment_node_llm_fallback_invalid_response(mock_spine, node_spe
     """Test LLM fallback when LLM returns invalid score (falls back to VADER)."""
     node = SentimentNode(node_spec_with_llm, mock_spine)
 
-    with patch("probable_intel.nodes.analysts.sentiment_node.LLMRouter") as mock_llm_class:
+    with patch("probable_intel.llm.router.LLMRouter") as mock_llm_class:
         mock_llm_router = AsyncMock()
         mock_llm_router.complete = AsyncMock(return_value="not a number")
         mock_llm_class.from_spec.return_value = mock_llm_router
@@ -202,7 +202,7 @@ async def test_sentiment_node_llm_fallback_invalid_response(mock_spine, node_spe
         # Should fall back to VADER score when LLM fails
         mock_spine.publish.assert_called_once()
         emitted_packet = mock_spine.publish.call_args[0][1]
-        assert emitted_packet.payload["backend_used"] == "vader"
+        assert emitted_packet.payload["sentiment_backend"] == "vader"
 
         await node.teardown()
 
