@@ -199,6 +199,15 @@ class BaseNode(ABC):
         log.error("[%s] fetch failed for %r: %s", self.node_id, key, exc)
 
     def health(self) -> dict:
+        """Return node health status dict.
+
+        Returns:
+            Dict with keys:
+            - node_id: str — unique node identifier
+            - state: str — current NodeState name (IDLE, RUNNING, ERROR, etc.)
+            - error_count: int — consecutive errors since last success
+            - last_heartbeat: float — Unix timestamp of last heartbeat, 0.0 if never
+        """
         return {
             "node_id": self.node_id,
             "state": self.state.name,
