@@ -71,8 +71,7 @@ class WebNode(BaseNode):
             resp = await self._client.get(url)
             resp.raise_for_status()
         except Exception as e:
-            log.warning("node %s: fetch failed %s: %s", self.node_id, url, e)
-            self._cb_failure(url)
+            await self._handle_fetch_error(url, e)
             return
         self._cb_success(url)
 

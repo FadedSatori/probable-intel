@@ -184,6 +184,20 @@ class BaseNode(ABC):
                 self.node_id, key, open_seconds, count,
             )
 
+    async def _handle_fetch_error(
+        self, key: str, exc: Exception, max_errors: int = 5, open_seconds: int = 300
+    ) -> None:
+        """Standardized error handling: log, update circuit breaker, optionally emit error packet.
+
+        Args:
+            key: Target/resource identifier for circuit breaker tracking
+            exc: The exception that occurred
+            max_errors: Threshold for circuit breaker to open
+            open_seconds: Duration to keep circuit open
+        """
+        self._cb_failure(key, max_errors, open_seconds)
+        log.error("[%s] fetch failed for %r: %s", self.node_id, key, exc)
+
     def health(self) -> dict:
         return {
             "node_id": self.node_id,

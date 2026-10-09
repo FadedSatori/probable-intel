@@ -112,8 +112,9 @@ class ReconNode(BaseNode):
         now = time.time()
         candidates = [
             e for e in top_entities
-            if e.get("degree", 0) >= self._min_degree
-            and (now - self._last_searched.get(e.get("key", ""), 0)) >= self._cooldown_seconds
+            if e.get("key")  # require non-empty key; skip keyless entities
+            and e.get("degree", 0) >= self._min_degree
+            and (now - self._last_searched.get(e.get("key"), 0)) >= self._cooldown_seconds
         ]
 
         if not candidates:
@@ -165,8 +166,7 @@ class ReconNode(BaseNode):
             self._cb_success(url)
             return result
         except Exception as e:
-            log.debug("node %s: recon search failed for %r: %s", self.node_id, query, e)
-            self._cb_failure(url)
+            await self._handle_fetch_error(url, e)
             return 0
 
     async def _parse_and_emit(
@@ -207,6 +207,7 @@ class ReconNode(BaseNode):
                 content_text = f"{title}. {description}".strip()
 
                 if not self._emit_channel:
+                    log.warning("[%s] emit channel not configured; skipping article emission", self.node_id)
                     continue
 
                 out = IntelPacket(

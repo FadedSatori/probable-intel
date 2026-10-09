@@ -121,8 +121,7 @@ class SocialNode(BaseNode):
             resp.raise_for_status()
             data = resp.json()
         except Exception as e:
-            log.error("node %s: HackerNews fetch failed: %s", self.node_id, e)
-            self._cb_failure(url)
+            await self._handle_fetch_error(url, e)
             return
 
         self._cb_success(url)
@@ -166,8 +165,7 @@ class SocialNode(BaseNode):
             resp.raise_for_status()
             statuses = resp.json()
         except Exception as e:
-            log.error("node %s: Mastodon fetch failed %s: %s", self.node_id, instance, e)
-            self._cb_failure(url)
+            await self._handle_fetch_error(url, e)
             return
 
         self._cb_success(url)

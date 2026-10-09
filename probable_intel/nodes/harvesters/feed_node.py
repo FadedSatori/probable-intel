@@ -84,8 +84,7 @@ class FeedNode(BaseNode):
             resp.raise_for_status()
             raw = resp.content
         except Exception as e:
-            log.error("node %s: failed to fetch %s: %s", self.node_id, url, e)
-            self._cb_failure(url)
+            await self._handle_fetch_error(url, e)
             return
 
         try:
@@ -96,8 +95,7 @@ class FeedNode(BaseNode):
                 feed = atoma.parse_atom_bytes(raw)
                 entries = feed.entries
             except Exception as e:
-                log.error("node %s: failed to parse feed %s: %s", self.node_id, url, e)
-                self._cb_failure(url)
+                await self._handle_fetch_error(url, e)
                 return
 
         self._cb_success(url)

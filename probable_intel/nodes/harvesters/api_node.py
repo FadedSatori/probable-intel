@@ -159,8 +159,7 @@ class ApiNode(BaseNode):
             resp.raise_for_status()
             data = resp.json()
         except Exception as e:
-            log.error("node %s: API fetch failed %s: %s", self.node_id, url, e)
-            self._cb_failure(url)
+            await self._handle_fetch_error(url, e)
             return
 
         self._cb_success(url)
