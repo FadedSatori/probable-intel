@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from probable_intel.nodes.archivists.storage_node import StorageNode
 from probable_intel.spine.packet import IntelPacket, Priority, TrustLevel
 from probable_intel.spine.spine import Spine
-from probable_intel.nexus.spec import NodeSpec, BackendSpec
+from probable_intel.nexus.spec import NodeSpec
 
 
 @pytest.fixture
@@ -39,7 +39,7 @@ def node_spec(temp_db_path):
         apparatus_id="test-apparatus",
         subscribe_channels=["sentiment.output", "threat.alerts"],
         emit=None,  # StorageNode does not emit
-        backend=BackendSpec(name="sqlite", config={"path": str(temp_db_path)}),
+        backend={"path": str(temp_db_path)},
     )
 
 
