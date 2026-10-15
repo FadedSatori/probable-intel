@@ -149,6 +149,8 @@ nodes:
       - type: "fake_api_endpoint"
         path: "/api/v1/fake"
         canary_id: "canary-01"
+    config:                  # node-specific tuning; flattened into the node's config
+      persist_path: "/data/kg.json"   # (e.g. KnowledgeGraphNode)
 
 federation:
   enabled: true
@@ -209,7 +211,7 @@ Copy `.env.example` to `.env`. Required for full operation:
 | Variable | Purpose |
 |---|---|
 | `ANTHROPIC_API_KEY` | Anthropic Claude provider (SentimentNode, NarrativeNode, etc.) |
-| `SQLITE_PATH` | Override default DB path |
+| `SQLITE_PATH` | Override default DB path (a node `path` or apparatus `storage.primary.path` takes precedence) |
 | `ALERT_WEBHOOK_URL` | AlertNode webhook sink |
 | `MASTER_KEY` | Encryption key for classified packets |
 | `HUB_BIND_HOST` | HubAPI bind address (default `127.0.0.1`) |
