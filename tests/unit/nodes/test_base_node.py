@@ -45,3 +45,35 @@ async def test_wait_any_delivers_every_packet_across_busy_channels():
     for ch in ("chan.a", "chan.b", "chan.c"):
         order = [p.payload["i"] for p in received if p.channel == ch]
         assert order == list(range(50))  # per-channel order preserved
+
+
+class _InstantSub:
+    def __init__(self, packet: IntelPacket) -> None:
+        self.packet = packet
+
+    async def get(self) -> IntelPacket:
+        return self.packet
+
+
+class _IgnoresCancelSub:
+    """Like a network client that finishes its read even after being cancelled."""
+
+    def __init__(self, packet: IntelPacket) -> None:
+        self.packet = packet
+
+    async def get(self) -> IntelPacket:
+        try:
+            await asyncio.sleep(10)
+        except asyncio.CancelledError:
+            pass
+        return self.packet
+
+
+async def test_wait_any_keeps_packets_from_reads_that_ignore_cancellation():
+    node = _Node(NodeSpec(node_type="Test", node_id="test.node", apparatus_id="test"), Spine())
+    fast, stubborn = _packet("chan.fast", 1), _packet("chan.slow", 2)
+
+    first = await asyncio.wait_for(node._wait_any([_InstantSub(fast), _IgnoresCancelSub(stubborn)]), 1.0)
+
+    assert first is fast
+    assert await node._wait_any([]) is stubborn  # salvaged, not dropped

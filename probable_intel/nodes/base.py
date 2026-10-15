@@ -160,15 +160,22 @@ class BaseNode(ABC):
         tasks = [asyncio.create_task(sub.get()) for sub in subscriptions]
         try:
             done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            for t in pending:
+                t.cancel()
+            if pending:
+                # A cancelled read can still finish with a packet (network clients
+                # may ignore cancellation once data has arrived), so let them settle.
+                await asyncio.wait(pending)
         except asyncio.CancelledError:
             for t in tasks:
                 t.cancel()
             raise
-        for t in pending:
-            t.cancel()  # safe: a cancelled Queue.get() leaves its item in the queue
-        # Several gets can finish in the same tick, and each has already dequeued
-        # its packet — buffer the extras instead of dropping them.
-        packets = [t.result() for t in tasks if t in done]
+        # Several reads can finish together, each having already taken its packet
+        # off its subscription — buffer the extras instead of dropping them.
+        packets = [
+            t.result() for t in tasks
+            if t in done or (not t.cancelled() and t.exception() is None)
+        ]
         self._ready_packets.extend(packets[1:])
         return packets[0]
 
