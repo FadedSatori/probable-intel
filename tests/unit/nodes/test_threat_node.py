@@ -99,3 +99,44 @@ async def test_contains_rule_on_tags():
 
     assert (await _next(sub)).payload["threat_matches"][0]["label"] == "ransomware-tag"
     await node.teardown()
+
+
+async def test_threats_are_tagged_with_attack_techniques():
+    spine = Spine()
+    node = _make_node(spine, ("sentiment_score < -0.5", "HIGH", "ransomware-activity"))
+    await node.setup()
+    sub = spine.subscribe("threat.test")
+
+    await node._assess(_packet(sentiment_score=-0.9, title="Hospital hit",
+                               content="The gang sent phishing emails before deploying ransomware."))
+
+    techniques = (await _next(sub)).payload["attack_techniques"]
+    assert [t["id"] for t in techniques] == ["T1486", "T1566"]
+    await node.teardown()
+
+
+async def test_attack_tagging_can_be_disabled():
+    spine = Spine()
+    node = _make_node(spine, ("sentiment_score < -0.5", "HIGH", "negative"))
+    node.spec.config["attack_mapping"] = False
+    await node.setup()
+    sub = spine.subscribe("threat.test")
+
+    await node._assess(_packet(sentiment_score=-0.9, content="ransomware everywhere"))
+
+    assert (await _next(sub)).payload["attack_techniques"] == []
+    await node.teardown()
+
+
+async def test_missing_mapping_file_degrades_to_untagged(tmp_path, caplog):
+    spine = Spine()
+    node = _make_node(spine, ("sentiment_score < -0.5", "HIGH", "negative"))
+    node.spec.config["attack_mapping"] = str(tmp_path / "absent.yaml")
+    await node.setup()
+    sub = spine.subscribe("threat.test")
+
+    await node._assess(_packet(sentiment_score=-0.9, content="ransomware everywhere"))
+
+    assert (await _next(sub)).payload["attack_techniques"] == []
+    assert "ATT&CK mapping" in caplog.text
+    await node.teardown()

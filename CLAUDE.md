@@ -14,6 +14,7 @@ pip install -e ".[nlp]"      # spaCy (EntityExtractorNode full mode)
 pip install -e ".[browser]"  # Playwright + curl_cffi (WebNode, FingerprintDefenseNode)
 pip install -e ".[redis]"    # redis-py (RedisSpine — multi-process Spine over Redis Streams)
 pip install -e ".[semantic]" # sentence-transformers + sqlite-vec (semantic memory, `pi search`)
+pip install -e ".[stix]"     # stix2 (STIX 2.1 export, `pi export`)
 
 # Run all tests
 python -m pytest
@@ -35,6 +36,7 @@ pi run      nexus/apparatuses/mvp-demo.nx
 pi status   nexus/apparatuses/mvp-demo.nx
 pi watch    nexus/apparatuses/mvp-demo.nx [--channel raw.feed.security]
 pi search   "ransomware C2 infrastructure" --top-k 10 [--db /path/to/main.db]
+pi export   nexus/apparatuses/mvp-demo.nx --format stix --output bundle.json [--since ISO-8601]
 ```
 
 ## Project layout
@@ -62,12 +64,12 @@ probable_intel/
 │   └── counterintel/               # OpSecNode, DeceptionNode, FingerprintDefenseNode,
 │                                   #   AttributionNode (passive adversary profiling)
 ├── storage/        # SQLiteBackend (async, INSERT OR IGNORE); vector_backend (semantic memory)
-└── cli/            # Typer app — validate / run / status / watch
+├── export/         # stix_export — STIX 2.1 bundles of stored HIGH/CRITICAL threats
+└── cli/            # Typer app — validate / run / status / watch / search / export
 
 nexus/
 ├── apparatuses/    # Operator .nx files (one per mission)
-├── policies/       # Reusable OPSEC / rate-limit policy fragments
-└── templates/      # Alert templates (Jinja2)
+└── data/           # attack_mapping.yaml — static MITRE ATT&CK lookup for ThreatAssessNode
 
 tests/
 ├── unit/           # test_nexus_parser, test_spine, test_threat_eval, nodes/
@@ -159,6 +161,8 @@ nodes:
       persist_path: "/data/kg.json"   # (e.g. KnowledgeGraphNode)
       # StorageNode: vector_index: false to skip semantic indexing (on when [semantic]
       # is installed); embedding_model: "all-MiniLM-L6-v2" (must match `pi search --model`)
+      # ThreatAssessNode: attack_mapping: false to skip ATT&CK tagging, or a path to
+      # override nexus/data/attack_mapping.yaml
 
 spine:                     # optional; default is the in-process bus
   backend: redis             # memory | redis — chosen by the first apparatus a hub loads
@@ -243,7 +247,7 @@ Local providers (Ollama, vLLM) require no API key — set `base_url` in the `llm
 | Harvester | `ReconNode` | Autonomous OSINT expansion via KG entity leads |
 | Analyst | `SentimentNode` | VADER + LLM fallback |
 | Analyst | `EntityExtractorNode` | spaCy NER + LLM fallback |
-| Analyst | `ThreatAssessNode` | Rule-based threat scoring |
+| Analyst | `ThreatAssessNode` | Rule-based threat scoring + MITRE ATT&CK tagging (`attack_techniques`) |
 | Analyst | `NarrativeNode` | LLM-powered rolling-window synthesis |
 | Sentinel | `AnomalyNode` | Rolling-baseline z-score anomaly detection |
 | Sentinel | `AlertNode` | Webhook + logfile alerting |
@@ -261,5 +265,4 @@ Local providers (Ollama, vLLM) require no API key — set `base_url` in the `llm
 - Textual TUI dashboard
 - `MonitorNode` (continuous watch over long-lived targets, distinct from AnomalyNode)
 - Predictive threat modeling (time-series over KG history)
-- MITRE ATT&CK mapping + STIX 2.1 export
 - Autonomous OSINT expansion via dark web sources (DarkWebNode)

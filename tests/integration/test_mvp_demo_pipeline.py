@@ -19,6 +19,7 @@ import fakeredis
 import httpx
 import pytest
 
+from probable_intel.export.stix_export import export_bundle
 from probable_intel.hub.hub import Hub
 from probable_intel.llm.anthropic_provider import AnthropicProvider
 from probable_intel.nodes.counterintel.fingerprint_node import FingerprintDefenseNode
@@ -160,6 +161,9 @@ async def test_mvp_demo_pipeline_end_to_end(hub, tmp_path, monkeypatch, respx_mo
         # The 3 strongly negative items each trip the CRITICAL rule; neutral ones don't.
         threats = await _collect(subs["threat.security"], 3)
         assert {t.payload["max_severity"] for t in threats} == {"CRITICAL"}
+        # ATT&CK tagging: only the ransomware article (k1) names a mapped technique.
+        tagged = {t.payload["title"]: [x["id"] for x in t.payload["attack_techniques"]] for t in threats}
+        assert tagged == {"k1": ["T1486"], "k2": [], "t1": []}
         assert await _nothing_more(subs["threat.security"])
 
         alerts = await _collect(subs["sink.alerts"], 3)
@@ -229,3 +233,17 @@ async def test_mvp_demo_pipeline_end_to_end(hub, tmp_path, monkeypatch, respx_mo
     top = search(db_path, query, model=storage._embedder.model_name, top_k=1)[0]
     assert top.title == "k1"
     assert top.max_severity == "CRITICAL" and "ThreatPacket" in top.packet_types
+
+    # STIX 2.1 export of the run: 3 CRITICAL threat reports, one ATT&CK technique.
+    bundle = export_bundle(db_path, "mvp-demo")
+    assert sum(o.type == "report" for o in bundle.objects) == 3
+    patterns = [o for o in bundle.objects if o.type == "attack-pattern"]
+    assert [p.external_references[0].external_id for p in patterns] == ["T1486"]
+    try:
+        import stix2validator
+    except ImportError:
+        return
+    results = stix2validator.validate_string(
+        bundle.serialize(), stix2validator.ValidationOptions(version="2.1")
+    )
+    assert results.is_valid, [str(e) for e in results.errors]

@@ -3,9 +3,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ..base import BaseNode
+from .attack_mapping import DEFAULT_PATH as ATTACK_MAPPING_PATH
+from .attack_mapping import AttackMapping
 from ...nexus.spec import RuleSpec
 from ...spine.packet import IntelPacket, Priority, TrustLevel
 
@@ -105,12 +108,26 @@ class ThreatAssessNode(BaseNode):
         super().__init__(spec, spine)
         self._rules: list[RuleSpec] = []
         self._subscriptions = []
+        self._attack: AttackMapping | None = None
 
     async def setup(self) -> None:
         self._rules = self.spec.rules
+        self._attack = self._load_attack_mapping()
         self._subscriptions = [
             self.spine.subscribe(ch) for ch in self.spec.subscribe_channels
         ]
+
+    def _load_attack_mapping(self) -> AttackMapping | None:
+        """config `attack_mapping`: false disables; a path overrides the shipped file."""
+        setting = self.spec.config.get("attack_mapping", True)
+        if setting is False:
+            return None
+        path = Path(setting) if isinstance(setting, str) else ATTACK_MAPPING_PATH
+        if not path.exists():
+            log.warning("node %s: ATT&CK mapping %s not found; threats won't be tagged",
+                        self.node_id, path)
+            return None
+        return AttackMapping.load(path)  # a malformed file fails setup loudly
 
     async def teardown(self) -> None:
         for sub in self._subscriptions:
@@ -136,6 +153,11 @@ class ThreatAssessNode(BaseNode):
 
         max_severity = max(matched, key=lambda m: _SEVERITY_RANK.get(m["severity"], 0))["severity"]
         out_priority = _SEVERITY_PRIORITY.get(max_severity, Priority.NORMAL)
+        techniques = []
+        if self._attack is not None:
+            payload = packet.payload
+            text = f"{payload.get('title', '')} {payload.get('content') or payload.get('body', '')}"
+            techniques = self._attack.match((m["label"] for m in matched), text)
 
         out = packet.relay(
             self.node_id,
@@ -146,6 +168,7 @@ class ThreatAssessNode(BaseNode):
                 "threat_matches": matched,
                 "max_severity": max_severity,
                 "rule_count": len(matched),
+                "attack_techniques": techniques,
             },
             priority=out_priority,
         )

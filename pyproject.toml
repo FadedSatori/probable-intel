@@ -44,6 +44,9 @@ semantic = [
     "sentence-transformers>=2.2",
     "sqlite-vec>=0.1",
 ]
+stix = [
+    "stix2>=3.0",
+]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
@@ -53,6 +56,9 @@ dev = [
     "redis>=4.2",
     "fakeredis>=2.20",
     "sqlite-vec>=0.1",
+    "stix2>=3.0",
+    # 3.3.1's wheel ships without its JSON schemas and can't validate anything.
+    "stix2-validator>=3.2,<3.3",
     "respx>=0.21",
     "ruff>=0.4",
     "mypy>=1.10",

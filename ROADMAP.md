@@ -7,19 +7,6 @@ Run `/sprint` to pick up and fully execute the next unchecked item.
 
 ## In Progress
 
-- [ ] **MITRE ATT&CK mapping + STIX 2.1 export**
-  Map threat labels to ATT&CK technique IDs; export collected intelligence as STIX 2.1 bundles.
-  Files: `probable_intel/nodes/analysts/threat_node.py` (add ATT&CK mapping), `probable_intel/cli/main.py` (add `pi export --format stix` command), `nexus/data/attack_mapping.yaml` (new static lookup)
-  Decision: ATT&CK mapping is a static YAML file in `nexus/data/` — not a live API call. Updated manually when ATT&CK releases new versions.
-  Decision: STIX export uses `stix2` library. Bundle per apparatus run (not per packet).
-  Decision: only HIGH/CRITICAL threats are exported; LOW/MEDIUM are filtered.
-  Why: enables interoperability with SOC platforms (Splunk, IBM QRadar, OpenCTI).
-  Verify: `pi export nexus/apparatuses/mvp-demo.nx --format stix --output /tmp/test.json` + validate with stix2-validator
-
----
-
-## Sprint Queue (ordered by value/complexity)
-
 - [ ] **Textual TUI dashboard**
   Live terminal dashboard showing packet flow, channel depths, node health, and recent alerts.
   Files: `probable_intel/cli/dashboard.py` (new), `pyproject.toml` (add `textual>=0.60` to optional `[tui]` group), `probable_intel/cli/main.py` (add `pi dashboard` command)
@@ -28,6 +15,10 @@ Run `/sprint` to pick up and fully execute the next unchecked item.
   Decision: refresh every 2s via `set_interval`. No websocket — same process as hub.
   Why: operators need visibility without writing custom subscribers.
   Verify: `pi dashboard nexus/apparatuses/mvp-demo.nx` renders without crash (visual check)
+
+---
+
+## Sprint Queue (ordered by value/complexity)
 
 - [ ] **DarkWebNode — Tor-based OSINT collection**
   Harvester node that collects from .onion sources via Tor SOCKS5 proxy.
@@ -52,6 +43,7 @@ Run `/sprint` to pick up and fully execute the next unchecked item.
 
 ## Completed
 
+- [x] **MITRE ATT&CK mapping + STIX 2.1 export** — static `nexus/data/attack_mapping.yaml` (technique table + rule-label and unambiguous content-keyword triggers; shipped rule labels are generic sentiment signals, so keywords carry the mapping) tags every ThreatPacket with `attack_techniques`. `pi export <apparatus> --format stix` writes one STIX 2.1 bundle of the apparatus's HIGH/CRITICAL threats: a `report` per article → `attack-pattern` + CVE `vulnerability` objects, deterministic UUIDv5 ids. Validated with stix2-validator (pinned <3.3: 3.3.1 ships without schemas) plus a reference-integrity test, incl. on the full mvp-demo pipeline.
 - [x] **Semantic memory layer** — `storage/vector_backend.py`: StorageNode embeds each article's `payload.content` once per `source_hash` (all-MiniLM-L6-v2 via sentence-transformers, 512-token cap, model load + encode in a thread executor) into a `packet_vectors` table in its SQLite file; `pi search "…" --top-k 10` ranks by cosine similarity in SQLite via sqlite-vec, else in Python. Optional `[semantic]` extra; config `vector_index: false` opts out. Tested with a deterministic stand-in embedder, incl. the full mvp-demo pipeline.
 - [x] **Redis Spine adapter** — `RedisSpine` (`probable_intel/spine/redis_spine.py`) behind the Spine interface; `spine: {backend: redis, url}` in an apparatus selects it. One private consumer group per subscription (same fan-out as the in-process Spine); a background reader per subscription feeds a local queue so `get()` stays cancel-safe (redis-py can swallow a cancellation mid-command). Full mvp-demo pipeline passes on memory, fakeredis and real Redis.
 - [x] **Reliability hardening — complete**

@@ -173,6 +173,58 @@ def search(
         typer.echo(f"    first seen {hit.first_seen} · {', '.join(hit.packet_types)}")
 
 
+@app.command()
+def export(
+    apparatus: Path = typer.Argument(..., help="Path to .nx apparatus file"),
+    fmt: str = typer.Option("stix", "--format", "-f", help="Export format (stix)"),
+    output: Path = typer.Option(None, "--output", "-o", help="Output file (default: stdout)"),
+    db: Path = typer.Option(None, "--db", help="SQLite file (default: the apparatus's storage path)"),
+    since: str = typer.Option("", "--since", help="Only threats stored at/after this ISO-8601 time"),
+) -> None:
+    """Export the apparatus's stored HIGH/CRITICAL threats (STIX 2.1 bundle)."""
+    import os
+
+    _setup_logging("WARNING")
+    from ..nexus.loader import NexusLoader
+
+    if fmt != "stix":
+        typer.echo(f"[ERROR] unsupported format {fmt!r} (supported: stix)", err=True)
+        raise typer.Exit(1)
+    try:
+        spec = NexusLoader().load(apparatus)
+    except NEXUSError as e:
+        typer.echo(f"[ERROR] {e}", err=True)
+        raise typer.Exit(1)
+
+    storage_paths = [n.config.get("path") for n in spec.nodes if n.node_type == "StorageNode"]
+    path = db or Path(next((p for p in storage_paths if p), None)
+                      or os.environ.get("SQLITE_PATH") or "/data/probable-intel/main.db")
+    if not path.exists():
+        typer.echo(f"[ERROR] no database at {path}", err=True)
+        raise typer.Exit(1)
+    try:
+        from ..export.stix_export import export_bundle
+        bundle = export_bundle(path, spec.name, since or None)
+    except ImportError:
+        typer.echo("[ERROR] STIX export needs the [stix] extra: pip install -e \".[stix]\"", err=True)
+        raise typer.Exit(1)
+
+    text = bundle.serialize(pretty=True)
+    if output:
+        output.write_text(text + "\n")
+    else:
+        typer.echo(text)
+    counts: dict[str, int] = {}
+    for obj in bundle.objects:
+        counts[obj.type] = counts.get(obj.type, 0) + 1
+    typer.echo(
+        f"exported {counts.get('report', 0)} threat report(s), "
+        f"{counts.get('attack-pattern', 0)} ATT&CK technique(s), "
+        f"{counts.get('vulnerability', 0)} CVE(s)" + (f" → {output}" if output else ""),
+        err=True,
+    )
+
+
 _PRIORITY_COLORS = {
     "LOW": "\033[90m",       # dark grey
     "NORMAL": "\033[36m",    # cyan
