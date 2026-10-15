@@ -132,6 +132,47 @@ def status(
     }, indent=2))
 
 
+@app.command()
+def search(
+    query: str = typer.Argument(..., help="Free-text description of what to find"),
+    top_k: int = typer.Option(10, "--top-k", "-k", min=1, help="Number of results"),
+    db: Path = typer.Option(
+        None, "--db",
+        help="SQLite file written by StorageNode (default: $SQLITE_PATH or /data/probable-intel/main.db)",
+    ),
+    model: str = typer.Option("", "--model", help="Embedding model (must match the one used to index)"),
+) -> None:
+    """Find stored intel semantically similar to QUERY."""
+    import os
+
+    _setup_logging("WARNING")
+    from ..storage.vector_backend import DEFAULT_MODEL, load_embedder
+    from ..storage.vector_backend import search as vector_search
+
+    path = db or Path(os.environ.get("SQLITE_PATH") or "/data/probable-intel/main.db")
+    if not path.exists():
+        typer.echo(f"[ERROR] no database at {path}", err=True)
+        raise typer.Exit(1)
+    embedder = load_embedder(model or DEFAULT_MODEL)
+    if embedder is None:
+        typer.echo("[ERROR] semantic search needs the [semantic] extra: "
+                   "pip install -e \".[semantic]\"", err=True)
+        raise typer.Exit(1)
+
+    [query_vector] = embedder.embed([query])
+    hits = vector_search(path, query_vector, model=embedder.model_name, top_k=top_k)
+    if not hits:
+        typer.echo(f"No indexed intel in {path} for model {embedder.model_name!r}.")
+        return
+    for rank, hit in enumerate(hits, 1):
+        severity = f" [{hit.max_severity}]" if hit.max_severity else ""
+        typer.echo(f"{rank:>2}. {hit.score:.3f}{severity} {hit.title or '(untitled)'}")
+        if hit.url:
+            typer.echo(f"    {hit.url}")
+        typer.echo(f"    {hit.snippet}")
+        typer.echo(f"    first seen {hit.first_seen} · {', '.join(hit.packet_types)}")
+
+
 _PRIORITY_COLORS = {
     "LOW": "\033[90m",       # dark grey
     "NORMAL": "\033[36m",    # cyan

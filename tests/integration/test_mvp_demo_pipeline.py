@@ -23,6 +23,8 @@ from probable_intel.hub.hub import Hub
 from probable_intel.llm.anthropic_provider import AnthropicProvider
 from probable_intel.nodes.counterintel.fingerprint_node import FingerprintDefenseNode
 from probable_intel.spine.redis_spine import RedisSpine
+from probable_intel.storage.vector_backend import search
+from tests.fakes import HashingEmbedder
 
 MVP_DEMO = Path(__file__).resolve().parents[2] / "nexus" / "apparatuses" / "mvp-demo.nx"
 NARRATIVE_TEXT = "SHAKEDOWN NARRATIVE"
@@ -129,7 +131,9 @@ async def test_mvp_demo_pipeline_end_to_end(hub, tmp_path, monkeypatch, respx_mo
     # Redirect side-effect paths and speed up KG summaries; nodes read config in setup().
     db_path = tmp_path / "intel.db"
     kg_path = tmp_path / "kg.json"
-    registry.get("archivist.storage.main").spec.config["path"] = str(db_path)
+    storage = registry.get("archivist.storage.main")
+    storage.spec.config["path"] = str(db_path)
+    storage._embedder = HashingEmbedder()  # semantic memory without downloading a model
     kg_config = registry.get("kg.entities.security").spec.config
     kg_config["persist_path"] = str(kg_path)
     kg_config["emit_interval_seconds"] = 0
@@ -217,3 +221,11 @@ async def test_mvp_demo_pipeline_end_to_end(hub, tmp_path, monkeypatch, respx_mo
     assert counts.get("GraphSummaryPacket", 0) >= 1
     assert counts.get("AttributionPacket", 0) >= 1
     assert kg_path.exists()  # KG persisted on teardown
+
+    # Semantic memory: each of the 6 stored articles embedded exactly once, and searchable.
+    with closing(sqlite3.connect(db_path)) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM packet_vectors").fetchone()[0] == 6
+    [query] = storage._embedder.embed(["hospital ransomware patient records"])
+    top = search(db_path, query, model=storage._embedder.model_name, top_k=1)[0]
+    assert top.title == "k1"
+    assert top.max_severity == "CRITICAL" and "ThreatPacket" in top.packet_types

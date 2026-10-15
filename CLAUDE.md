@@ -13,6 +13,7 @@ pip install atoma vaderSentiment aiosqlite httpx pyyaml networkx respx   # runti
 pip install -e ".[nlp]"      # spaCy (EntityExtractorNode full mode)
 pip install -e ".[browser]"  # Playwright + curl_cffi (WebNode, FingerprintDefenseNode)
 pip install -e ".[redis]"    # redis-py (RedisSpine — multi-process Spine over Redis Streams)
+pip install -e ".[semantic]" # sentence-transformers + sqlite-vec (semantic memory, `pi search`)
 
 # Run all tests
 python -m pytest
@@ -33,6 +34,7 @@ pi validate nexus/apparatuses/mvp-demo.nx
 pi run      nexus/apparatuses/mvp-demo.nx
 pi status   nexus/apparatuses/mvp-demo.nx
 pi watch    nexus/apparatuses/mvp-demo.nx [--channel raw.feed.security]
+pi search   "ransomware C2 infrastructure" --top-k 10 [--db /path/to/main.db]
 ```
 
 ## Project layout
@@ -59,7 +61,7 @@ probable_intel/
 │   ├── coordinators/               # TaskRouterNode (OODA loop)
 │   └── counterintel/               # OpSecNode, DeceptionNode, FingerprintDefenseNode,
 │                                   #   AttributionNode (passive adversary profiling)
-├── storage/        # SQLiteBackend (async, dedup via INSERT OR IGNORE)
+├── storage/        # SQLiteBackend (async, INSERT OR IGNORE); vector_backend (semantic memory)
 └── cli/            # Typer app — validate / run / status / watch
 
 nexus/
@@ -87,12 +89,12 @@ Hub.load_apparatus()
   ├── FederatedSpine (optional — wires hub to peer hubs over HTTP)
   └── directive_loop (applies TaskDirectivePackets from system.task.directives)
                               ↓
-                    Spine (named channels, 4 priority lanes each)
+                    Spine (named channels; one FIFO queue per subscriber)
                               ↓
                     Nodes communicate only via IntelPacket on channels
 ```
 
-**Spine** — `spine.publish(channel, packet)` fans out to all subscribers. Each channel has four `asyncio.Queue` lanes (CRITICAL / HIGH / NORMAL / LOW). `get()` drains highest priority first.
+**Spine** — `spine.publish(channel, packet)` fans out to all subscribers. Each subscription has its own FIFO `asyncio.Queue` (5,000 cap; overflow is counted in `channel_metrics(ch).dropped`). `IntelPacket.priority` travels with the packet but does not reorder delivery. `RedisSpine` provides the same interface over Redis Streams.
 
 **IntelPacket** — all inter-node data. Key fields: `packet_type`, `source_node_id`, `apparatus_id`, `channel`, `payload: dict`, `priority: Priority`, `trust_level: TrustLevel`, `provenance: list[str]`, `source_hash` (SHA-256, for dedup), `ttl_seconds`. Use `packet.relay(new_node_id, new_channel, ...)` to forward — preserves `source_hash` and extends provenance.
 
@@ -155,6 +157,8 @@ nodes:
         canary_id: "canary-01"
     config:                  # node-specific tuning; flattened into the node's config
       persist_path: "/data/kg.json"   # (e.g. KnowledgeGraphNode)
+      # StorageNode: vector_index: false to skip semantic indexing (on when [semantic]
+      # is installed); embedding_model: "all-MiniLM-L6-v2" (must match `pi search --model`)
 
 spine:                     # optional; default is the in-process bus
   backend: redis             # memory | redis — chosen by the first apparatus a hub loads
@@ -205,7 +209,7 @@ Field access: dot-notation (`entity.type`, `threat.score`)
 - `source_hash` is set once at packet creation and preserved through all `relay()` hops — use it for dedup, not `packet_id`
 - Operator identity never appears in `.nx` files, logs, or code — handles only
 - `SecretManager` (`hub/secrets.py`) is the only place that reads `.env`; never access `os.environ` directly for secrets elsewhere
-- `StorageNode` uses `INSERT OR IGNORE` — duplicate `source_hash` is silently dropped, not an error
+- `StorageNode` uses `INSERT OR IGNORE` keyed on `packet_id` — re-delivering the same packet is a no-op. Every pipeline stage of one article (shared `source_hash`) is stored as its own row; the semantic index embeds each `source_hash` once
 
 ## CI
 
@@ -243,7 +247,7 @@ Local providers (Ollama, vLLM) require no API key — set `base_url` in the `llm
 | Analyst | `NarrativeNode` | LLM-powered rolling-window synthesis |
 | Sentinel | `AnomalyNode` | Rolling-baseline z-score anomaly detection |
 | Sentinel | `AlertNode` | Webhook + logfile alerting |
-| Archivist | `StorageNode` | SQLite persistence |
+| Archivist | `StorageNode` | SQLite persistence + semantic index for `pi search` (with `[semantic]`) |
 | Archivist | `KnowledgeGraphNode` | Entity co-occurrence graph (NetworkX) |
 | Coordinator | `TaskRouterNode` | OODA loop — LLM-enhanced collection directives |
 | CounterIntel | `OpSecNode` | Request-pattern auditing |
@@ -256,7 +260,6 @@ Local providers (Ollama, vLLM) require no API key — set `base_url` in the `llm
 - Neo4j backend for `KnowledgeGraphNode` (currently NetworkX in-memory only)
 - Textual TUI dashboard
 - `MonitorNode` (continuous watch over long-lived targets, distinct from AnomalyNode)
-- Semantic memory layer (vector embeddings + similarity retrieval)
 - Predictive threat modeling (time-series over KG history)
 - MITRE ATT&CK mapping + STIX 2.1 export
 - Autonomous OSINT expansion via dark web sources (DarkWebNode)

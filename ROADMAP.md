@@ -7,19 +7,6 @@ Run `/sprint` to pick up and fully execute the next unchecked item.
 
 ## In Progress
 
-- [ ] **Semantic memory layer — vector search over stored packets**
-  Add similarity retrieval so operators can query "find threats similar to this CVE description". Built on top of StorageNode.
-  Files: `probable_intel/storage/vector_backend.py` (new), `probable_intel/nodes/archivists/storage_node.py` (add vector indexing), `probable_intel/cli/main.py` (add `pi search` command)
-  Decision: use `sentence-transformers` with `all-MiniLM-L6-v2` (22MB, no API key, runs locally). Store embeddings in SQLite-vec or as BLOB columns with cosine sim computed in Python (fallback if sqlite-vec unavailable).
-  Decision: index only `payload.content` field, truncated to 512 tokens.
-  Decision: `pi search "ransomware C2 infrastructure" --top-k 10` — CLI command, not a new node.
-  Why: enables retrospective analysis without re-running the pipeline.
-  Verify: `python -m pytest tests/unit/nodes/test_storage_node.py -v` + manual `pi search` smoke test
-
----
-
-## Sprint Queue (ordered by value/complexity)
-
 - [ ] **MITRE ATT&CK mapping + STIX 2.1 export**
   Map threat labels to ATT&CK technique IDs; export collected intelligence as STIX 2.1 bundles.
   Files: `probable_intel/nodes/analysts/threat_node.py` (add ATT&CK mapping), `probable_intel/cli/main.py` (add `pi export --format stix` command), `nexus/data/attack_mapping.yaml` (new static lookup)
@@ -28,6 +15,10 @@ Run `/sprint` to pick up and fully execute the next unchecked item.
   Decision: only HIGH/CRITICAL threats are exported; LOW/MEDIUM are filtered.
   Why: enables interoperability with SOC platforms (Splunk, IBM QRadar, OpenCTI).
   Verify: `pi export nexus/apparatuses/mvp-demo.nx --format stix --output /tmp/test.json` + validate with stix2-validator
+
+---
+
+## Sprint Queue (ordered by value/complexity)
 
 - [ ] **Textual TUI dashboard**
   Live terminal dashboard showing packet flow, channel depths, node health, and recent alerts.
@@ -61,6 +52,7 @@ Run `/sprint` to pick up and fully execute the next unchecked item.
 
 ## Completed
 
+- [x] **Semantic memory layer** — `storage/vector_backend.py`: StorageNode embeds each article's `payload.content` once per `source_hash` (all-MiniLM-L6-v2 via sentence-transformers, 512-token cap, model load + encode in a thread executor) into a `packet_vectors` table in its SQLite file; `pi search "…" --top-k 10` ranks by cosine similarity in SQLite via sqlite-vec, else in Python. Optional `[semantic]` extra; config `vector_index: false` opts out. Tested with a deterministic stand-in embedder, incl. the full mvp-demo pipeline.
 - [x] **Redis Spine adapter** — `RedisSpine` (`probable_intel/spine/redis_spine.py`) behind the Spine interface; `spine: {backend: redis, url}` in an apparatus selects it. One private consumer group per subscription (same fan-out as the in-process Spine); a background reader per subscription feeds a local queue so `get()` stays cancel-safe (redis-py can swallow a cancellation mid-command). Full mvp-demo pipeline passes on memory, fakeredis and real Redis.
 - [x] **Reliability hardening — complete**
   Wired circuit breaker into all harvesters; fixed lifecycle concurrent-restart race; fixed ChannelMetrics.dropped counting; rate-limited drop warning logs.
@@ -72,7 +64,7 @@ Run `/sprint` to pick up and fully execute the next unchecked item.
 - [x] Sentinel nodes — AnomalyNode (z-score anomaly detection), AlertNode (webhook + logfile)
 - [x] Archivist nodes — StorageNode (SQLite, dedup via INSERT OR IGNORE), KnowledgeGraphNode (NetworkX entity co-occurrence graph)
 - [x] Coordinator — TaskRouterNode (OODA loop, LLM-enhanced collection directives)
-- [x] CounterIntel — OpSecNode (request-pattern auditing), DeceptionNode (honeypots + canaries), FingerprintDefenseNode (browser identity injection), AttributionNode (passive adversary profiling)
+- [x] CounterIntel — OpSecNode (request-pattern auditing), DeceptionNode (honeypots + canaries), FingerprintDefenseNode (per-request jitter + request audit), AttributionNode (passive adversary profiling)
 - [x] Provider-agnostic LLM layer — LLMProvider ABC, AnthropicProvider, OllamaProvider, VLLMProvider, LLMRouter (budget guard + factory)
 - [x] Federation — FederatedSpine (multi-hub HTTP push/SSE pull), /federate/* HubAPI endpoints, FederationSpec parser
 - [x] CI/CD — GitHub Actions (Python 3.11/3.12 matrix): install → validate → unit tests → integration tests
