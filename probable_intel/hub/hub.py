@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import fnmatch
 import logging
 import time
 from pathlib import Path
@@ -69,19 +70,20 @@ class Hub:
 
     async def run(self) -> None:
         log.info("hub starting %d node(s)", len(self._registry.all_ids()))
-        self._health.start()
-        await self._lifecycle.start_all()
-
-        if self._federation is not None:
-            self._federation.start()
-            log.info("hub: federation started (%d peers)", len(self._federation._spec.peers))
-
-        self._background_tasks.append(
-            asyncio.create_task(self._directive_loop(), name="hub-directives")
-        )
-
-        log.info("hub ready — all nodes running")
         try:
+            # Inside the try so a node setup() failure still shuts everything down.
+            self._health.start()
+            await self._lifecycle.start_all()
+
+            if self._federation is not None:
+                self._federation.start()
+                log.info("hub: federation started (%d peers)", len(self._federation._spec.peers))
+
+            self._background_tasks.append(
+                asyncio.create_task(self._directive_loop(), name="hub-directives")
+            )
+
+            log.info("hub ready — all nodes running")
             await asyncio.Event().wait()  # run until cancelled
         except asyncio.CancelledError:
             pass
@@ -121,16 +123,28 @@ class Hub:
             **payload, "_applied_at": time.time(),
         }
 
-        node = self._registry.get(target_id)
-        if node is None:
-            log.debug("hub: directive target %r not found (may use wildcard)", target_id)
+        targets = [
+            node for node in self._registry.all_nodes()
+            if fnmatch.fnmatchcase(node.node_id, target_id)
+        ]
+        if not targets:
+            log.debug("hub: directive target %r matched no nodes", target_id)
             return
+        for node in targets:
+            self._apply_directive_to(node, dtype, params, ttl)
 
+    def _apply_directive_to(self, node, dtype: str, params: dict, ttl: int) -> None:
+        target_id = node.node_id
         try:
             if dtype == "add_keyword_filter" and hasattr(node, "_keywords"):
-                kw = str(params.get("keyword", ""))
-                if kw:
-                    node._keywords.add(kw)  # type: ignore[attr-defined]
+                kw = str(params.get("keyword", "")).lower()
+                keywords = node._keywords  # type: ignore[attr-defined]
+                if kw and kw not in keywords:
+                    # FeedNode keeps a list; other nodes may keep a set.
+                    if isinstance(keywords, set):
+                        keywords.add(kw)
+                    else:
+                        keywords.append(kw)
                     log.info("hub: added keyword filter %r to %s", kw, target_id)
 
             elif dtype == "expand_collection":

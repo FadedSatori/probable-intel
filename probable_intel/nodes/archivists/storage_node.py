@@ -29,11 +29,12 @@ class StorageNode(BaseNode):
             or os.environ.get("SQLITE_PATH")
             or "/data/probable-intel/main.db"
         )
-        self._backend = SQLiteBackend(Path(db_path))
-        await self._backend.open()
+        # Subscribe before the awaited open() so packets published meanwhile are queued.
         self._subscriptions = [
             self.spine.subscribe(ch) for ch in self.spec.subscribe_channels
         ]
+        self._backend = SQLiteBackend(Path(db_path))
+        await self._backend.open()
 
     async def teardown(self) -> None:
         for sub in self._subscriptions:

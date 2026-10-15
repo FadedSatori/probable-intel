@@ -78,7 +78,21 @@ class NodeLifecycleManager:
             self._restarting.discard(node_id)
 
     async def start_all(self) -> None:
-        await asyncio.gather(*(self.start(nid) for nid in self._registry.all_ids()))
+        """Start every node; if any setup fails, raise only after all starts settle.
+
+        Settling first guarantees no node is still mid-setup (and about to spawn
+        run tasks) when the caller reacts to the failure by stopping everything.
+        """
+        ids = self._registry.all_ids()
+        results = await asyncio.gather(*(self.start(nid) for nid in ids), return_exceptions=True)
+        errors = [r for r in results if isinstance(r, BaseException)]
+        if errors:
+            raise errors[0]
 
     async def stop_all(self) -> None:
-        await asyncio.gather(*(self.stop(nid) for nid in self._registry.all_ids()))
+        """Stop every node; one failing teardown does not abort the others."""
+        ids = self._registry.all_ids()
+        results = await asyncio.gather(*(self.stop(nid) for nid in ids), return_exceptions=True)
+        for nid, result in zip(ids, results):
+            if isinstance(result, Exception):
+                log.error("node %s failed to stop cleanly: %s", nid, result)
