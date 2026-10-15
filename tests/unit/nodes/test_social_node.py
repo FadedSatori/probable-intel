@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import pytest
 import httpx
 
@@ -25,75 +24,22 @@ def _make_spec(targets=None, keywords=None, min_word_count=0) -> NodeSpec:
 
 # ── Reddit ────────────────────────────────────────────────────────────────────
 
-REDDIT_RESPONSE = {
-    "data": {
-        "children": [
-            {"data": {
-                "title": "Critical zero-day exploit found in widespread software",
-                "selftext": "Researchers have discovered a critical vulnerability.",
-                "permalink": "/r/netsec/comments/abc/test/",
-                "author": "security_researcher",
-                "score": 500,
-                "created_utc": 1700000000,
-            }},
-            {"data": {
-                "title": "Weekend thread",
-                "selftext": "",
-                "permalink": "/r/netsec/comments/xyz/weekend/",
-                "author": "automod",
-                "score": 1,
-                "created_utc": 1700000001,
-            }},
-        ]
-    }
-}
-
-
 @pytest.mark.asyncio
-async def test_reddit_emits_packet(respx_mock):
-    """SocialNode fetches Reddit and emits a RawSocialPacket."""
-    respx_mock.get("https://www.reddit.com/r/netsec/new.json?limit=25").mock(
-        return_value=httpx.Response(200, json=REDDIT_RESPONSE)
-    )
-    spine = Spine()
-    spec = _make_spec(
-        keywords=["exploit", "vulnerability", "critical"],
-        targets=[{"type": "social", "source": "reddit", "subreddit": "netsec"}],
-    )
-    node = SocialNode(spec, spine)
-    await node.setup()
-
-    sub = spine.subscribe("raw.social.test")
-    await node._fetch_reddit(node._targets[0])
-
-    packet = await sub.get()
-    assert packet.packet_type == "RawSocialPacket"
-    assert packet.payload["source"] == "reddit"
-    assert "exploit" in packet.payload["title"].lower() or "exploit" in packet.payload["content"].lower()
-    assert packet.payload["subreddit"] == "netsec"
-    sub.close()
-    await node.teardown()
-
-
-@pytest.mark.asyncio
-async def test_reddit_deduplicates(respx_mock):
-    """Same permalink not emitted twice."""
-    respx_mock.get("https://www.reddit.com/r/netsec/new.json?limit=25").mock(
-        return_value=httpx.Response(200, json=REDDIT_RESPONSE)
-    )
+async def test_reddit_is_deprecated_noop(caplog):
+    """Reddit JSON API needs OAuth since 2023: _fetch_reddit warns and emits nothing."""
     spine = Spine()
     spec = _make_spec(targets=[{"type": "social", "source": "reddit", "subreddit": "netsec"}])
     node = SocialNode(spec, spine)
     await node.setup()
 
     sub = spine.subscribe("raw.social.test")
-    await node._fetch_reddit(node._targets[0])
-    count_first = sub._queue.qsize() if hasattr(sub, '_queue') else None
+    with caplog.at_level("WARNING"):
+        await node._fetch_reddit(node._targets[0])
 
-    # Seed all seen_urls from first pass
-    initial_seen = len(node._seen_urls)
-    await node._fetch_reddit(node._targets[0])
-    assert len(node._seen_urls) == initial_seen  # no new unique URLs
+    assert "requires OAuth" in caplog.text
+    assert "r/netsec/.rss" in caplog.text
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(sub.get(), timeout=0.1)
     sub.close()
     await node.teardown()
 

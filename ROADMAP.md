@@ -88,3 +88,4 @@ Run `/sprint` to pick up and fully execute the next unchecked item.
 - [x] Proxy support — `trust_env=True` on all harvesters; `HTTPS_PROXY`/`HTTP_PROXY`/`ALL_PROXY` env vars respected
 - [x] Elegance refactor — `_wait_any()` and emit init extracted to BaseNode (removed 199 lines of boilerplate across 16 files)
 - [x] Reliability hardening (partial) — circuit breaker in BaseNode, wired to FeedNode + ApiNode; HealthMonitor max-restart cap; `_wait_any` CancelledError fix; Channel.get() CancelledError fix
+- [x] CI restored — suite had hung since May (stale Reddit test awaiting a packet from a deprecated no-op); fixed `_handle_fetch_error` TypeError; reverted StorageNode batching (no I/O win: `save()` commits per row); `pytest-timeout` (60s/test) + 15-min job cap so hangs fail fast
