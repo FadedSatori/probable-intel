@@ -27,6 +27,7 @@ _VALID_NODE_TYPES = {
 
 _VALID_TRUST_LEVELS = {"unclassified", "restricted", "classified", "top_secret"}
 _VALID_PRIORITIES = {"low", "normal", "high", "critical"}
+_VALID_SPINE_BACKENDS = {"memory", "redis"}
 
 
 def _parse_duration(val: Any) -> int:
@@ -100,6 +101,8 @@ class NexusParser:
                 for node in spec.nodes:
                     if node.node_type == "StorageNode":
                         node.config.setdefault("path", spec.storage.path)
+        if "spine" in data and isinstance(data["spine"], dict):
+            self._build_spine(spec, data["spine"])
         if "router" in data and isinstance(data["router"], dict):
             self._build_router(spec.router, data["router"])
         if "federation" in data and isinstance(data["federation"], dict):
@@ -246,6 +249,20 @@ class NexusParser:
             llm.max_tokens = int(data["max_tokens"])
         if "budget_per_day_usd" in data:
             llm.budget_per_day_usd = float(data["budget_per_day_usd"])
+
+    def _build_spine(self, spec: ApparatusSpec, data: dict) -> None:
+        backend = str(data.get("backend", "memory")).lower()
+        if backend not in _VALID_SPINE_BACKENDS:
+            raise NEXUSError(
+                f"invalid spine backend {backend!r}; must be one of {sorted(_VALID_SPINE_BACKENDS)}",
+                apparatus_name=spec.name,
+            )
+        url = str(data.get("url", ""))
+        if backend == "redis" and not url:
+            raise NEXUSError("spine backend 'redis' requires a 'url'", apparatus_name=spec.name)
+        spec.spine.backend = backend
+        spec.spine.url = url
+        spec.spine.max_len = int(data.get("max_len", spec.spine.max_len))
 
     def _build_storage(self, storage: StorageSpec, data: dict) -> None:
         primary = data.get("primary", {})

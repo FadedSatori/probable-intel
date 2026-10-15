@@ -9,16 +9,20 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import sqlite3
 from contextlib import closing
 from pathlib import Path
 from xml.sax.saxutils import escape
 
+import fakeredis
 import httpx
+import pytest
 
 from probable_intel.hub.hub import Hub
 from probable_intel.llm.anthropic_provider import AnthropicProvider
 from probable_intel.nodes.counterintel.fingerprint_node import FingerprintDefenseNode
+from probable_intel.spine.redis_spine import RedisSpine
 
 MVP_DEMO = Path(__file__).resolve().parents[2] / "nexus" / "apparatuses" / "mvp-demo.nx"
 NARRATIVE_TEXT = "SHAKEDOWN NARRATIVE"
@@ -53,6 +57,26 @@ WATCHED = (
 )
 
 
+# Every backend runs the identical pipeline; set REDIS_URL to include a real Redis.
+SPINE_BACKENDS = ["memory", "fakeredis"] + (["redis"] if os.environ.get("REDIS_URL") else [])
+
+
+@pytest.fixture(params=SPINE_BACKENDS)
+def hub(request) -> Hub:
+    h = Hub()
+    if request.param == "fakeredis":
+        server = fakeredis.FakeServer()
+        h.spine = RedisSpine(
+            "redis://fake",
+            client=fakeredis.FakeAsyncRedis(server=server),
+            control_client=fakeredis.FakeRedis(server=server),
+            idle_sleep=0.02,
+        )
+    elif request.param == "redis":
+        h.spine = RedisSpine(os.environ["REDIS_URL"], block_ms=200)
+    return h  # mvp-demo has no `spine:` block, so it joins whichever spine this is
+
+
 def _rss(channel_title: str, items: dict[str, str]) -> bytes:
     entries = "".join(
         f"<item><title>{key}</title><link>https://example.test/{key}</link>"
@@ -78,7 +102,7 @@ async def _nothing_more(sub, wait: float = 0.5) -> bool:
     return False
 
 
-async def test_mvp_demo_pipeline_end_to_end(tmp_path, monkeypatch, respx_mock, caplog):
+async def test_mvp_demo_pipeline_end_to_end(hub, tmp_path, monkeypatch, respx_mock, caplog):
     caplog.set_level(logging.INFO)
     # The anthropic SDK (>=1.x) ships vendored httpx2/httpcore2, which respx cannot
     # intercept, so mock at our provider boundary; the SDK client is never built.
@@ -98,7 +122,6 @@ async def test_mvp_demo_pipeline_end_to_end(tmp_path, monkeypatch, respx_mock, c
         return_value=httpx.Response(200, content=_rss("THN", THN_ITEMS))
     )
 
-    hub = Hub()
     hub.load_apparatus(MVP_DEMO)
     registry = hub._registry
     assert len(registry.all_ids()) == 15

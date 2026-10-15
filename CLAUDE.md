@@ -12,6 +12,7 @@ pip install atoma vaderSentiment aiosqlite httpx pyyaml networkx respx   # runti
 # Optional extras
 pip install -e ".[nlp]"      # spaCy (EntityExtractorNode full mode)
 pip install -e ".[browser]"  # Playwright + curl_cffi (WebNode, FingerprintDefenseNode)
+pip install -e ".[redis]"    # redis-py (RedisSpine — multi-process Spine over Redis Streams)
 
 # Run all tests
 python -m pytest
@@ -19,6 +20,9 @@ python -m pytest
 # Run by tier
 python -m pytest tests/unit/
 python -m pytest tests/integration/
+
+# Spine tests run on fakeredis; add a real Redis with:
+REDIS_URL=redis://127.0.0.1:6379/0 python -m pytest
 
 # Lint / type check
 ruff check .
@@ -35,7 +39,7 @@ pi watch    nexus/apparatuses/mvp-demo.nx [--channel raw.feed.security]
 
 ```
 probable_intel/
-├── spine/          # IntelPacket, Spine (async bus), Channel (priority lanes)
+├── spine/          # IntelPacket, Spine (in-process bus), RedisSpine (Redis Streams), Channel
 ├── nexus/          # NEXUS DSL — parser, validator, loader, spec dataclasses, errors
 ├── hub/            # Hub orchestrator, NodeRegistry, lifecycle, health, NodeFactory, API,
 │                   # federation.py (FederatedSpine — multi-hub HTTP push/SSE pull)
@@ -152,6 +156,11 @@ nodes:
     config:                  # node-specific tuning; flattened into the node's config
       persist_path: "/data/kg.json"   # (e.g. KnowledgeGraphNode)
 
+spine:                     # optional; default is the in-process bus
+  backend: redis             # memory | redis — chosen by the first apparatus a hub loads
+  url: "redis://localhost:6379/0"
+  max_len: 10000             # approximate per-channel stream cap
+
 federation:
   enabled: true
   peers:
@@ -244,7 +253,6 @@ Local providers (Ollama, vLLM) require no API key — set `base_url` in the `llm
 
 ## What's deferred (genuinely not built)
 
-- Redis Spine adapter (replace asyncio.Queue with Redis streams for multi-process scale-out)
 - Neo4j backend for `KnowledgeGraphNode` (currently NetworkX in-memory only)
 - Textual TUI dashboard
 - `MonitorNode` (continuous watch over long-lived targets, distinct from AnomalyNode)

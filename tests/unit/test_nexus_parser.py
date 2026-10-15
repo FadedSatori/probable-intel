@@ -221,3 +221,26 @@ storage:
 """
     node = NexusParser().parse(nx).node_by_id("store.test")
     assert node.config["path"] == "/node/level.db"
+
+
+def test_spine_block_defaults_to_memory():
+    assert NexusParser().parse('apparatus_name: "x"\nnodes: []\n').spine.backend == "memory"
+
+
+def test_redis_spine_block_is_parsed():
+    spec = NexusParser().parse(
+        'apparatus_name: "x"\nnodes: []\n'
+        'spine:\n  backend: redis\n  url: "redis://cache:6379/2"\n  max_len: 500\n'
+    )
+    assert (spec.spine.backend, spec.spine.url, spec.spine.max_len) == (
+        "redis", "redis://cache:6379/2", 500,
+    )
+
+
+@pytest.mark.parametrize("block, message", [
+    ("spine:\n  backend: kafka\n", "invalid spine backend"),
+    ("spine:\n  backend: redis\n", "requires a 'url'"),
+])
+def test_invalid_spine_block_is_rejected(block, message):
+    with pytest.raises(NEXUSError, match=message):
+        NexusParser().parse('apparatus_name: "x"\nnodes: []\n' + block)

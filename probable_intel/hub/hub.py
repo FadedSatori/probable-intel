@@ -5,7 +5,9 @@ import fnmatch
 import logging
 import time
 from pathlib import Path
+from urllib.parse import urlsplit
 
+from ..nexus.errors import NEXUSError
 from ..nexus.loader import NexusLoader
 from ..nexus.spec import ApparatusSpec
 from ..spine.spine import Spine
@@ -34,6 +36,7 @@ class Hub:
 
     def load_apparatus(self, path: Path | str) -> ApparatusSpec:
         spec = self._loader.load(Path(path))
+        self._select_spine(spec)
         self._apparatuses.append(spec)
         nodes = []
         for node_spec in spec.nodes:
@@ -56,6 +59,29 @@ class Hub:
             len(spec.nodes),
         )
         return spec
+
+    def _select_spine(self, spec: ApparatusSpec) -> None:
+        """Switch to a RedisSpine when the apparatus asks for one.
+
+        Nodes capture the spine at construction, so the switch is only possible
+        before any node is registered. Apparatuses without a `spine: redis` block
+        join whatever spine the hub already has.
+        """
+        if spec.spine.backend != "redis":
+            return
+        from ..spine.redis_spine import RedisSpine
+
+        if isinstance(self.spine, RedisSpine):
+            return
+        if self._registry.all_ids():
+            raise NEXUSError(
+                "spine backend 'redis' must be declared by the first apparatus loaded "
+                "(nodes are already attached to the in-memory spine)",
+                apparatus_name=spec.name,
+            )
+        self.spine = RedisSpine(spec.spine.url, max_len=spec.spine.max_len)
+        url = urlsplit(spec.spine.url)  # never log credentials embedded in the URL
+        log.info("hub: using Redis spine at %s://%s:%s", url.scheme, url.hostname, url.port or 6379)
 
     def _wire_kg_references(self) -> None:
         kg_nodes = {
@@ -209,6 +235,9 @@ class Hub:
             await self._federation.stop()
         await self._health.stop()
         await self._lifecycle.stop_all()
+        aclose = getattr(self.spine, "aclose", None)  # RedisSpine connections
+        if aclose is not None:
+            await aclose()
         log.info("hub stopped")
 
     def status(self) -> dict:

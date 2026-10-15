@@ -99,3 +99,35 @@ async def test_keyword_filter_directive_appends_to_feed_keyword_list(hub):
     await hub._apply_directive(_directive("add_keyword_filter", "feed.alpha", keyword="lockbit"))
 
     assert feed._keywords == ["breach", "lockbit"]
+
+
+_REDIS_NX = _NX.replace('apparatus_name: "hub-test"', 'apparatus_name: "redis-test"') + """
+spine:
+  backend: redis
+  url: "redis://127.0.0.1:1/0"
+"""
+
+
+async def test_apparatus_can_select_the_redis_spine(tmp_path):
+    from probable_intel.spine.redis_spine import RedisSpine
+
+    path = tmp_path / "redis.nx"
+    path.write_text(_REDIS_NX)
+    hub = Hub()
+    hub.load_apparatus(path)  # no connection is made until nodes start
+
+    assert isinstance(hub.spine, RedisSpine)
+    assert all(n.spine is hub.spine for n in hub._registry.all_nodes())
+    await hub.spine.aclose()
+
+
+async def test_redis_spine_cannot_be_selected_after_nodes_exist(hub, tmp_path):
+    from probable_intel.nexus.errors import NEXUSError
+
+    path = tmp_path / "redis.nx"
+    path.write_text(_REDIS_NX.replace('"feed.alpha"', '"feed.beta"')
+                    .replace('"analyst.threat.alpha"', '"analyst.threat.beta"')
+                    .replace('"anomaly.alpha"', '"anomaly.beta"'))
+
+    with pytest.raises(NEXUSError, match="first apparatus"):
+        hub.load_apparatus(path)

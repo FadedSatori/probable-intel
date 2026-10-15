@@ -7,20 +7,6 @@ Run `/sprint` to pick up and fully execute the next unchecked item.
 
 ## In Progress
 
-- [ ] **Redis Spine adapter**
-  Replace asyncio.Queue with Redis Streams for multi-process scale-out. Enables running harvesters and analysts in separate processes.
-  Files: `probable_intel/spine/redis_spine.py` (new), `probable_intel/nexus/spec.py` (add SpineSpec), `probable_intel/nexus/parser.py` (parse `spine:` block)
-  Decision: `RedisSpine` implements the same interface as `Spine` (publish/subscribe/channel_metrics/all_channel_names). `SpineSubscription` wraps a Redis consumer group read. The `Spine` class is never modified — callers can't tell which backend they're using.
-  Decision: use `redis.asyncio` (bundled in redis-py ≥4.2). No aioredis.
-  Decision: channel names map directly to Redis Stream keys prefixed with `pi:`.
-  Config: `spine: {backend: redis, url: "redis://localhost:6379"}` in apparatus file.
-  Why: horizontal scaling and process isolation without changing any node code.
-  Verify: `python -m pytest tests/unit/test_spine.py -v` + integration test with mock Redis
-
----
-
-## Sprint Queue (ordered by value/complexity)
-
 - [ ] **Semantic memory layer — vector search over stored packets**
   Add similarity retrieval so operators can query "find threats similar to this CVE description". Built on top of StorageNode.
   Files: `probable_intel/storage/vector_backend.py` (new), `probable_intel/nodes/archivists/storage_node.py` (add vector indexing), `probable_intel/cli/main.py` (add `pi search` command)
@@ -29,6 +15,10 @@ Run `/sprint` to pick up and fully execute the next unchecked item.
   Decision: `pi search "ransomware C2 infrastructure" --top-k 10` — CLI command, not a new node.
   Why: enables retrospective analysis without re-running the pipeline.
   Verify: `python -m pytest tests/unit/nodes/test_storage_node.py -v` + manual `pi search` smoke test
+
+---
+
+## Sprint Queue (ordered by value/complexity)
 
 - [ ] **MITRE ATT&CK mapping + STIX 2.1 export**
   Map threat labels to ATT&CK technique IDs; export collected intelligence as STIX 2.1 bundles.
@@ -71,6 +61,7 @@ Run `/sprint` to pick up and fully execute the next unchecked item.
 
 ## Completed
 
+- [x] **Redis Spine adapter** — `RedisSpine` (`probable_intel/spine/redis_spine.py`) behind the Spine interface; `spine: {backend: redis, url}` in an apparatus selects it. One private consumer group per subscription (same fan-out as the in-process Spine); a background reader per subscription feeds a local queue so `get()` stays cancel-safe (redis-py can swallow a cancellation mid-command). Full mvp-demo pipeline passes on memory, fakeredis and real Redis.
 - [x] **Reliability hardening — complete**
   Wired circuit breaker into all harvesters; fixed lifecycle concurrent-restart race; fixed ChannelMetrics.dropped counting; rate-limited drop warning logs.
   Status: All 5 harvesters (FeedNode, ApiNode, SocialNode, WebNode, ReconNode) now inherit and use circuit breaker from BaseNode. Lifecycle restart guard prevents concurrent restart races. Spine metrics accurately track queue drops with rate-limited warnings.
