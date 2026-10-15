@@ -182,6 +182,8 @@ async def test_recon_packet_has_required_fields(respx_mock):
     for field in ("title", "content", "url", "source", "recon_entity", "recon_entity_type", "recon_entity_text"):
         assert field in payload, f"missing field: {field}"
     assert payload["url"].startswith("https://")
+    # RSS body lives in <description>; content must include it, not just the title.
+    assert "Researchers identified a new campaign" in payload["content"]
     sub.close()
     await node.stop()
 

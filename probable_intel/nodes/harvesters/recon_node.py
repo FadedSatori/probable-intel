@@ -10,6 +10,7 @@ from urllib.parse import quote_plus
 import httpx
 
 from ..base import BaseNode
+from ._feed_entry import entry_text, entry_title, entry_url
 from ...spine.packet import IntelPacket, TrustLevel
 
 if TYPE_CHECKING:
@@ -189,7 +190,7 @@ class ReconNode(BaseNode):
         count = 0
         for item in items:
             try:
-                item_url = str(getattr(item, "link", None) or getattr(item, "id_", "") or "")
+                item_url = entry_url(item)
                 if not item_url:
                     continue
                 dedup = hashlib.sha256(item_url.encode()).hexdigest()[:16]
@@ -202,8 +203,8 @@ class ReconNode(BaseNode):
                     for k in oldest:
                         del self._seen_urls[k]
 
-                title = str(getattr(item, "title", None) or "")
-                description = str(getattr(item, "summary", None) or getattr(item, "content", None) or "")
+                title = entry_title(item)
+                description = entry_text(item)
                 content_text = f"{title}. {description}".strip()
 
                 if not self._emit_channel:

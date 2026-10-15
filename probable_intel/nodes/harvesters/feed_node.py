@@ -4,12 +4,12 @@ import asyncio
 import hashlib
 import logging
 import random
-from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 import httpx
 
 from ..base import BaseNode
+from ._feed_entry import entry_published, entry_text, entry_title, entry_url
 from ...spine.packet import IntelPacket, TrustLevel
 
 if TYPE_CHECKING:
@@ -18,13 +18,15 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
+SEEN_HASHES_CAP = 50_000
+
 
 class FeedNode(BaseNode):
     """Ingests RSS/Atom feeds and emits RawFeedPackets."""
 
     def __init__(self, spec: "NodeSpec", spine: "Spine") -> None:
         super().__init__(spec, spine)
-        self._seen_hashes: set[str] = set()
+        self._seen_hashes: dict[str, None] = {}  # insertion-ordered, oldest first
         self._feed_urls: list[str] = []
         self._interval_seconds: int = 900
         self._keywords: list[str] = []
@@ -101,17 +103,17 @@ class FeedNode(BaseNode):
         self._cb_success(url)
 
         for entry in entries:
-            content = self._extract_content(entry)
+            content = entry_text(entry)
             if not self._passes_filters(content):
                 continue
 
             content_hash = hashlib.sha256(content.encode()).hexdigest()[:16]
             if content_hash in self._seen_hashes:
                 continue
-            self._seen_hashes.add(content_hash)
-            # Cap memory footprint
-            if len(self._seen_hashes) > 50_000:
-                self._seen_hashes = set(list(self._seen_hashes)[-25_000:])
+            self._seen_hashes[content_hash] = None
+            if len(self._seen_hashes) > SEEN_HASHES_CAP:
+                for old in list(self._seen_hashes)[: SEEN_HASHES_CAP // 2]:
+                    del self._seen_hashes[old]
 
             packet = IntelPacket(
                 packet_type="RawFeedPacket",
@@ -119,10 +121,10 @@ class FeedNode(BaseNode):
                 apparatus_id=self.apparatus_id,
                 channel=self._emit_channel,
                 payload={
-                    "title": getattr(entry, "title", "") or "",
-                    "url": str(getattr(entry, "url", "") or getattr(entry, "id_", "") or ""),
+                    "title": entry_title(entry),
+                    "url": entry_url(entry),
                     "content": content,
-                    "published": self._parse_date(entry),
+                    "published": entry_published(entry),
                     "feed_url": url,
                     "tags": [],
                 },
@@ -132,16 +134,7 @@ class FeedNode(BaseNode):
             )
             if self._emit_channel:
                 await self.emit(self._emit_channel, packet)
-            log.debug("node %s emitted entry: %s", self.node_id, getattr(entry, "title", "?"))
-
-    def _extract_content(self, entry: object) -> str:
-        for attr in ("description", "summary", "content"):
-            val = getattr(entry, attr, None)
-            if val:
-                if isinstance(val, list):
-                    return str(val[0]) if val else ""
-                return str(val)
-        return ""
+            log.debug("node %s emitted entry: %s", self.node_id, packet.payload["title"])
 
     def _passes_filters(self, text: str) -> bool:
         lower = text.lower()
@@ -152,10 +145,3 @@ class FeedNode(BaseNode):
         if self._keywords and not any(kw in lower for kw in self._keywords):
             return False
         return True
-
-    def _parse_date(self, entry: object) -> str:
-        for attr in ("pub_date", "updated", "published", "created"):
-            val = getattr(entry, attr, None)
-            if val:
-                return str(val)
-        return datetime.now(timezone.utc).isoformat()
