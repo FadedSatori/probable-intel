@@ -46,6 +46,8 @@ class BaseNode(ABC):
         self._target_errors: dict[str, int] = {}    # key → consecutive error count
         self._circuit_open: dict[str, float] = {}   # key → open_until timestamp
         self._ready_packets: deque[IntelPacket] = deque()  # received by _wait_any, not yet returned
+        # FingerprintDefenseNode in this apparatus, wired by Hub; see _before_request().
+        self._request_guard = None
         # Emit config — every node reads spec.emit once here; override in setup() if needed
         self._emit_channel: str = spec.emit.channel if spec.emit else ""
         self._emit_priority: Priority = (
@@ -169,6 +171,21 @@ class BaseNode(ABC):
         packets = [t.result() for t in tasks if t in done]
         self._ready_packets.extend(packets[1:])
         return packets[0]
+
+    async def _before_request(self, url: str) -> None:
+        """Call immediately before each outbound collection request.
+
+        With a FingerprintDefenseNode wired in, the request is reported to it
+        (it publishes an audit event on ci.opsec.audit for OpSecNode) and the
+        jitter it returns is slept, so requests don't fire in a machine-regular
+        burst. A no-op when the apparatus has no FingerprintDefenseNode.
+        """
+        if self._request_guard is None:
+            return
+        identity = f"{self.node_id}/{self.spec.identity_profile}"
+        delay = await self._request_guard.report_request(identity, url, self.node_id)
+        if delay > 0:
+            await asyncio.sleep(delay)
 
     # ── per-target circuit breaker ─────────────────────────────────────────
 

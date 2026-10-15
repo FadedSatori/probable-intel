@@ -160,6 +160,7 @@ class ReconNode(BaseNode):
         if self._cb_check(url):
             log.debug("node %s: circuit open for google-news-rss — skipping", self.node_id)
             return 0
+        await self._before_request(url)
         try:
             resp = await self._client.get(url)
             resp.raise_for_status()

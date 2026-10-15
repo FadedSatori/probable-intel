@@ -154,6 +154,7 @@ class ApiNode(BaseNode):
             else:
                 log.debug("node %s: auth_env %r not set; proceeding unauthenticated", self.node_id, auth_env)
 
+        await self._before_request(url)
         try:
             resp = await self._client.get(url, params=params, headers=headers)
             resp.raise_for_status()

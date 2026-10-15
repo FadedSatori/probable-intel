@@ -210,6 +210,14 @@ nodes:
       channel: "ci.opsec.events"
       priority: normal
 
+  - type: FingerprintDefenseNode
+    id: "ci.fingerprint.cyber"
+    # Wired by the Hub into every harvester in this apparatus: jitters each outbound
+    # request and audits it to OpSecNode on the fixed channel ci.opsec.audit.
+    config:
+      jitter_mu: 2.1        # median delay before each request, seconds (0.5–30 clamp)
+      jitter_sigma: 0.8
+
   - type: DeceptionNode
     id: "ci.deception.cyber"
     honeypots:

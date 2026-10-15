@@ -191,7 +191,8 @@ Field access: dot-notation (`entity.type`, `threat.score`)
 
 ## Key invariants
 
-- Nodes **never** communicate directly — only via `Spine.publish()` / `Spine.subscribe()`
+- Nodes **never** communicate directly — only via `Spine.publish()` / `Spine.subscribe()`.
+  The only exceptions are service references the Hub wires at load time: AttributionNode → KnowledgeGraphNode (`_kg_node`, read-only queries) and every node → the apparatus's FingerprintDefenseNode (`_request_guard`, used by harvesters via `BaseNode._before_request()` before each outbound request). Packet data still flows only over the Spine.
 - `source_hash` is set once at packet creation and preserved through all `relay()` hops — use it for dedup, not `packet_id`
 - Operator identity never appears in `.nx` files, logs, or code — handles only
 - `SecretManager` (`hub/secrets.py`) is the only place that reads `.env`; never access `os.environ` directly for secrets elsewhere
@@ -238,7 +239,7 @@ Local providers (Ollama, vLLM) require no API key — set `base_url` in the `llm
 | Coordinator | `TaskRouterNode` | OODA loop — LLM-enhanced collection directives |
 | CounterIntel | `OpSecNode` | Request-pattern auditing |
 | CounterIntel | `DeceptionNode` | Honeypot endpoints + canary tokens |
-| CounterIntel | `FingerprintDefenseNode` | Browser identity injection |
+| CounterIntel | `FingerprintDefenseNode` | Per-request jitter + request audit (`ci.opsec.audit`) for every harvester in its apparatus (Hub-wired) |
 | CounterIntel | `AttributionNode` | Passive adversary profiling from honeypot hits |
 
 ## What's deferred (genuinely not built)

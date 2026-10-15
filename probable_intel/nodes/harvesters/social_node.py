@@ -116,6 +116,7 @@ class SocialNode(BaseNode):
             log.debug("node %s: circuit open for hackernews — skipping", self.node_id)
             return
 
+        await self._before_request(url)
         try:
             resp = await self._client.get(url, params=params)
             resp.raise_for_status()
@@ -160,6 +161,7 @@ class SocialNode(BaseNode):
             log.debug("node %s: circuit open for mastodon:%s — skipping", self.node_id, instance)
             return
 
+        await self._before_request(url)
         try:
             resp = await self._client.get(url)
             resp.raise_for_status()

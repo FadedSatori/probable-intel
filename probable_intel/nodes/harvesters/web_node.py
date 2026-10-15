@@ -66,6 +66,7 @@ class WebNode(BaseNode):
         if self._cb_check(url):
             log.debug("node %s: circuit open for %s — skipping", self.node_id, url)
             return
+        await self._before_request(url)
         try:
             assert self._client is not None
             resp = await self._client.get(url)

@@ -35,12 +35,15 @@ class Hub:
     def load_apparatus(self, path: Path | str) -> ApparatusSpec:
         spec = self._loader.load(Path(path))
         self._apparatuses.append(spec)
+        nodes = []
         for node_spec in spec.nodes:
             node = self._factory.create(node_spec, self.spine)
             self._registry.register(node)
+            nodes.append(node)
 
         # Wire KnowledgeGraphNode references into AttributionNodes
         self._wire_kg_references()
+        self._wire_fingerprint_defense(nodes)
 
         # Start federation if configured
         if spec.federation.enabled and not self._federation:
@@ -67,6 +70,26 @@ class Hub:
                 if kg_id and kg_id in kg_nodes:
                     node._kg_node = kg_nodes[kg_id]  # type: ignore[attr-defined]
                     log.debug("wired %s._kg_node → %s", node.node_id, kg_id)
+
+    def _wire_fingerprint_defense(self, nodes: list) -> None:
+        """Give each node in one apparatus its FingerprintDefenseNode, if it has one.
+
+        Harvesters call node._before_request() per outbound request, which reports
+        it to this guard and sleeps the jitter it returns. Scoped per apparatus so
+        one apparatus's guard never throttles another's harvesters.
+        """
+        guards = [n for n in nodes if n.__class__.__name__ == "FingerprintDefenseNode"]
+        if not guards:
+            return
+        if len(guards) > 1:
+            log.warning(
+                "apparatus has %d FingerprintDefenseNodes; using %s",
+                len(guards), guards[0].node_id,
+            )
+        for node in nodes:
+            if node not in guards:
+                node._request_guard = guards[0]
+        log.debug("wired %s as request guard for %d node(s)", guards[0].node_id, len(nodes) - len(guards))
 
     async def run(self) -> None:
         log.info("hub starting %d node(s)", len(self._registry.all_ids()))

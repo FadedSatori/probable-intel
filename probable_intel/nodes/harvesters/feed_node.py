@@ -81,6 +81,7 @@ class FeedNode(BaseNode):
             log.debug("node %s: circuit open for %s — skipping", self.node_id, url)
             return
 
+        await self._before_request(url)
         try:
             resp = await self._client.get(url)
             resp.raise_for_status()

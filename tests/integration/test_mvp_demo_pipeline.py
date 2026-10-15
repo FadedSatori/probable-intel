@@ -18,6 +18,7 @@ import httpx
 
 from probable_intel.hub.hub import Hub
 from probable_intel.llm.anthropic_provider import AnthropicProvider
+from probable_intel.nodes.counterintel.fingerprint_node import FingerprintDefenseNode
 
 MVP_DEMO = Path(__file__).resolve().parents[2] / "nexus" / "apparatuses" / "mvp-demo.nx"
 NARRATIVE_TEXT = "SHAKEDOWN NARRATIVE"
@@ -48,7 +49,7 @@ FAILURE_MARKERS = (
 WATCHED = (
     "raw.feed.security", "analysis.sentiment.security", "threat.security",
     "sink.alerts", "system.task.directives", "analysis.narrative.security",
-    "ci.attribution.events",
+    "ci.attribution.events", "ci.opsec.audit",
 )
 
 
@@ -88,6 +89,8 @@ async def test_mvp_demo_pipeline_end_to_end(tmp_path, monkeypatch, respx_mock, c
         return NARRATIVE_TEXT
 
     monkeypatch.setattr(AnthropicProvider, "complete", fake_complete)
+    # Keep the real per-request jitter path but make it instant.
+    monkeypatch.setattr(FingerprintDefenseNode, "_lognormal_delay", lambda self: 0.0)
     respx_mock.get("https://krebsonsecurity.com/feed/").mock(
         return_value=httpx.Response(200, content=_rss("Krebs", KREBS_ITEMS))
     )
@@ -98,7 +101,7 @@ async def test_mvp_demo_pipeline_end_to_end(tmp_path, monkeypatch, respx_mock, c
     hub = Hub()
     hub.load_apparatus(MVP_DEMO)
     registry = hub._registry
-    assert len(registry.all_ids()) == 14
+    assert len(registry.all_ids()) == 15
 
     # Redirect side-effect paths and speed up KG summaries; nodes read config in setup().
     db_path = tmp_path / "intel.db"
@@ -111,6 +114,15 @@ async def test_mvp_demo_pipeline_end_to_end(tmp_path, monkeypatch, respx_mock, c
     subs = {ch: hub.spine.subscribe(ch) for ch in WATCHED}
     task = asyncio.create_task(hub.run())
     try:
+        # Every outbound harvester request is reported to FingerprintDefenseNode,
+        # which audits it to OpSecNode on ci.opsec.audit.
+        audits = await _collect(subs["ci.opsec.audit"], 2)
+        assert {a.payload["target_url"] for a in audits} == {
+            "https://krebsonsecurity.com/feed/", "https://feeds.feedburner.com/TheHackersNews",
+        }
+        assert {a.payload["identity_profile_id"] for a in audits} == {"feed.krebs-security/rotate"}
+        assert registry.get("feed.krebs-security")._request_guard is registry.get("ci.fingerprint.main")
+
         # Feed: 6 of 8 items pass the filters.
         await _collect(subs["raw.feed.security"], 6)
         assert await _nothing_more(subs["raw.feed.security"])
