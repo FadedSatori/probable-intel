@@ -39,6 +39,11 @@ class OpSecNode(BaseNode):
         config = self.spec.config
         self._identity_window = config.get("identity_window_seconds", 3600)
         self._max_uses_per_window = config.get("max_uses_per_window", 50)
+        # Keep just enough timestamps to tell whether the limit was exceeded;
+        # a fixed cap below the limit would make reuse undetectable.
+        self._identity_usage = collections.defaultdict(
+            lambda: collections.deque(maxlen=self._max_uses_per_window + 1)
+        )
         log.info("node %s: monitoring opsec audit channel", self.node_id)
 
     async def teardown(self) -> None:
@@ -60,7 +65,7 @@ class OpSecNode(BaseNode):
         if event_type == "request":
             await self._check_identity_reuse(packet)
         elif event_type == "proxy_health":
-            self._update_proxy_health(packet)
+            await self._update_proxy_health(packet)
 
     async def _check_identity_reuse(self, packet: IntelPacket) -> None:
         profile_id = packet.payload.get("identity_profile_id", "unknown")
@@ -90,7 +95,7 @@ class OpSecNode(BaseNode):
                 Priority.HIGH,
             )
 
-    def _update_proxy_health(self, packet: IntelPacket) -> None:
+    async def _update_proxy_health(self, packet: IntelPacket) -> None:
         proxy_id = packet.payload.get("proxy_id", "")
         health_score = float(packet.payload.get("health_score", 1.0))
         self._proxy_health[proxy_id] = health_score
@@ -99,12 +104,10 @@ class OpSecNode(BaseNode):
         total = len(self._proxy_health)
         if total > 0 and healthy / total < 0.2:
             log.warning("opsec: proxy pool critically low (%d/%d healthy)", healthy, total)
-            asyncio.create_task(
-                self._emit_opsec_event(
-                    "proxy_pool_critical",
-                    {"healthy": healthy, "total": total},
-                    Priority.HIGH,
-                )
+            await self._emit_opsec_event(
+                "proxy_pool_critical",
+                {"healthy": healthy, "total": total},
+                Priority.HIGH,
             )
 
     async def _emit_opsec_event(self, event_type: str, data: dict, priority: Priority) -> None:
@@ -113,7 +116,7 @@ class OpSecNode(BaseNode):
             source_node_id=self.node_id,
             apparatus_id=self.apparatus_id,
             channel=_EVENTS_CHANNEL,
-            payload={"event_type": event_type, **data},
+            payload={"event_type": event_type, "severity": priority.name, **data},
             priority=priority,
             trust_level=TrustLevel.CLASSIFIED,
         )

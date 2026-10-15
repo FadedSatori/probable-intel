@@ -76,7 +76,9 @@ class AlertNode(BaseNode):
         await self._handle(packet)
 
     async def _handle(self, packet: IntelPacket) -> None:
-        severity = packet.payload.get("max_severity", "LOW")
+        # ThreatPackets use max_severity; counter-intel packets use severity.
+        payload = packet.payload
+        severity = str(payload.get("max_severity") or payload.get("severity") or "LOW").upper()
         if severity not in self._severity_filter:
             return
 

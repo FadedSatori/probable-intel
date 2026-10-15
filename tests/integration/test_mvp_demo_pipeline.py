@@ -140,6 +140,14 @@ async def test_mvp_demo_pipeline_end_to_end(tmp_path, monkeypatch, respx_mock, c
             )
         await _collect(subs["ci.attribution.events"], 1)
 
+        # Honeypot hits are the highest-signal event: they must reach the alert sink.
+        deception_alerts = []
+        while not deception_alerts:
+            alert = await asyncio.wait_for(subs["sink.alerts"].get(), 5)
+            if alert.payload["source_node"] == "ci.deception.main":
+                deception_alerts.append(alert)
+        assert deception_alerts[0].payload["severity"] == "CRITICAL"
+
         await asyncio.sleep(0.5)  # let storage and the directive loop drain
         assert hub.status()["active_directives"] >= 1
         assert registry.get("ci.attribution.main")._kg_node is registry.get("kg.entities.security")

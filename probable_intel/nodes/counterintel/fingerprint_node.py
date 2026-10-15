@@ -38,6 +38,11 @@ class FingerprintDefenseNode(BaseNode):
         config = self.spec.config
         self._jitter_mu = float(config.get("jitter_mu", 2.1))
         self._jitter_sigma = float(config.get("jitter_sigma", 0.8))
+        if self._jitter_mu <= 0 or self._jitter_sigma < 0:
+            raise ValueError(
+                f"jitter_mu must be > 0 and jitter_sigma >= 0 "
+                f"(got {self._jitter_mu}, {self._jitter_sigma})"
+            )
         log.info("node %s: fingerprint defense active (μ=%.1fs)", self.node_id, self._jitter_mu)
 
     async def run(self) -> None:

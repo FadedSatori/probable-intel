@@ -94,3 +94,25 @@ async def test_alert_is_also_written_to_logfile(tmp_path):
     line = log_path.read_text().strip().splitlines()[-1]
     assert json.loads(line)["severity"] == "HIGH"
     await node.teardown()
+
+
+async def test_counterintel_severity_field_is_honoured():
+    """Deception/OpSec/Attribution packets carry `severity`, not `max_severity`."""
+    spine = Spine()
+    node = _make_node(spine)
+    await node.setup()
+    alerts = spine.subscribe("sink.alerts")
+    trigger = IntelPacket(
+        packet_type="DeceptionTriggerPacket",
+        source_node_id="ci.deception.test",
+        apparatus_id="test",
+        channel="ci.deception.triggers",
+        payload={"canary_id": "canary-1", "severity": "CRITICAL"},
+    )
+
+    await node._handle(trigger)
+
+    alert = await asyncio.wait_for(alerts.get(), timeout=1.0)
+    assert alert.payload["severity"] == "CRITICAL"
+    assert alert.payload["source_node"] == "ci.deception.test"
+    await node.teardown()
