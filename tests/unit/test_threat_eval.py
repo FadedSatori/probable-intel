@@ -50,3 +50,15 @@ def test_get_field_dot_notation():
     assert _get_field("entity.type", payload) == "person"
     assert _get_field("entity.name", payload) == "Alice"
     assert _get_field("entity.missing", payload) is None
+
+
+def test_operator_characters_inside_values():
+    payload = {"title": "XSS via <script> tag", "note": "a==b"}
+    assert _eval_condition('title contains "<script>"', payload) is True
+    assert _eval_condition('note != "a==b"', payload) is False
+    assert _eval_condition('note == "a==b"', payload) is True
+
+
+def test_comparison_without_spaces():
+    assert _eval_condition("score<=-0.5", {"score": -0.5}) is True
+    assert _eval_condition("score>=1", {"score": 0.5}) is False

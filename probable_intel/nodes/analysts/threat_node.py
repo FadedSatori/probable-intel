@@ -17,6 +17,9 @@ log = logging.getLogger(__name__)
 
 _SEVERITY_RANK = {"LOW": 1, "MEDIUM": 2, "HIGH": 3, "CRITICAL": 4}
 
+_CONTAINS_RE = re.compile(r"^(\S+)\s+contains\s+(.+)$")
+_COMPARISON_RE = re.compile(r"^(\S+?)\s*(==|!=|>=|<=|>|<)\s*(.+)$")
+
 _SEVERITY_PRIORITY = {
     "LOW": Priority.NORMAL,
     "MEDIUM": Priority.HIGH,
@@ -44,35 +47,9 @@ def _eval_condition(condition: str, payload: dict) -> bool:
     if condition.startswith("NOT "):
         return not _eval_condition(condition[4:], payload)
 
-    # Handle comparison: field.path OP value
-    for op in ("==", "!=", ">=", "<=", ">", "<"):
-        if op in condition:
-            left, _, right = condition.partition(op)
-            left = left.strip()
-            right = right.strip().strip('"').strip("'")
-            field_val = _get_field(left, payload)
-            if field_val is None:
-                return False
-            try:
-                if op == "==":
-                    return str(field_val) == right
-                if op == "!=":
-                    return str(field_val) != right
-                fv = float(field_val)
-                rv = float(right)
-                if op == ">=":
-                    return fv >= rv
-                if op == "<=":
-                    return fv <= rv
-                if op == ">":
-                    return fv > rv
-                if op == "<":
-                    return fv < rv
-            except (ValueError, TypeError):
-                return False
-
-    # Handle: field contains "value"
-    m = re.match(r"^(\S+)\s+contains\s+(.+)$", condition)
+    # Handle: field contains "value" — before comparisons, so operator
+    # characters inside the value (e.g. contains "<script>") aren't misparsed.
+    m = _CONTAINS_RE.match(condition)
     if m:
         field_path, val_expr = m.group(1), m.group(2).strip().strip('"').strip("'")
         field_val = _get_field(field_path, payload)
@@ -81,6 +58,30 @@ def _eval_condition(condition: str, payload: dict) -> bool:
         if isinstance(field_val, list):
             return val_expr in field_val
         return val_expr in str(field_val)
+
+    # Handle comparison: field.path OP value — the first operator after the field
+    m = _COMPARISON_RE.match(condition)
+    if m:
+        left, op, right = m.group(1), m.group(2), m.group(3).strip().strip('"').strip("'")
+        field_val = _get_field(left, payload)
+        if field_val is None:
+            return False
+        try:
+            if op == "==":
+                return str(field_val) == right
+            if op == "!=":
+                return str(field_val) != right
+            fv = float(field_val)
+            rv = float(right)
+            if op == ">=":
+                return fv >= rv
+            if op == "<=":
+                return fv <= rv
+            if op == ">":
+                return fv > rv
+            return fv < rv
+        except (ValueError, TypeError):
+            return False
 
     return False
 

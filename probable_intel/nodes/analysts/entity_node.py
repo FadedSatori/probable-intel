@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import logging
+import re
 from typing import TYPE_CHECKING
 
 from ..base import BaseNode
@@ -13,6 +15,22 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 _SPACY_MODEL = "en_core_web_sm"
+
+
+def _normalize_llm_entities(raw: object) -> list[dict]:
+    """LLM output is untrusted: keep {"text", "type"} dicts; bare strings become UNKNOWN."""
+    if not isinstance(raw, list):
+        return []
+    entities = []
+    for item in raw:
+        if isinstance(item, str) and item.strip():
+            entities.append({"text": item.strip(), "type": "UNKNOWN"})
+        elif isinstance(item, dict) and str(item.get("text") or "").strip():
+            entities.append({
+                "text": str(item["text"]).strip(),
+                "type": str(item.get("type") or "UNKNOWN"),
+            })
+    return entities
 
 
 class EntityExtractorNode(BaseNode):
@@ -64,7 +82,6 @@ class EntityExtractorNode(BaseNode):
         await self._process(packet)
 
     async def _process(self, packet: IntelPacket) -> None:
-        import json
         text = packet.payload.get("content") or packet.payload.get("body", "")
         if not text:
             return
@@ -82,9 +99,9 @@ class EntityExtractorNode(BaseNode):
                         max_tokens=512,
                     )
                     # Extract JSON array from response (may have surrounding text)
-                    match = __import__("re").search(r"\[.*\]", raw, __import__("re").DOTALL)
+                    match = re.search(r"\[.*\]", raw, re.DOTALL)
                     if match:
-                        entities = json.loads(match.group())
+                        entities = _normalize_llm_entities(json.loads(match.group()))
                         tags.append("llm-entities")
                 except Exception as e:
                     log.debug("node %s: LLM entity fallback failed: %s", self.node_id, e)
