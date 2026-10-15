@@ -114,13 +114,12 @@ def create_api(hub: "Hub") -> FastAPI:
         import asyncio
 
         async def event_stream():
-            from .federation import _packet_to_dict
             q = fed.add_stream_subscriber()
             try:
                 while True:
                     try:
                         packet = await asyncio.wait_for(q.get(), timeout=30.0)
-                        data = json.dumps(_packet_to_dict(packet))
+                        data = json.dumps(packet.to_dict())
                         yield f"data:{data}\n\n"
                     except asyncio.TimeoutError:
                         yield ": heartbeat\n\n"

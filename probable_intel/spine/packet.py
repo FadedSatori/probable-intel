@@ -68,6 +68,45 @@ class IntelPacket:
             source_hash=self.source_hash,
         )
 
+    def to_dict(self) -> dict[str, Any]:
+        """JSON-safe wire form (federation, RedisSpine, HubAPI streams)."""
+        return {
+            "packet_id": str(self.packet_id),
+            "packet_type": self.packet_type,
+            "source_node_id": self.source_node_id,
+            "apparatus_id": self.apparatus_id,
+            "channel": self.channel,
+            "timestamp_utc": self.timestamp_utc.isoformat(),
+            "trust_level": self.trust_level.name,
+            "confidence": self.confidence,
+            "priority": self.priority.name,
+            "ttl_seconds": self.ttl_seconds,
+            "payload": self.payload,
+            "provenance": self.provenance,
+            "tags": self.tags,
+            "source_hash": self.source_hash,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "IntelPacket":
+        ts = datetime.fromisoformat(data["timestamp_utc"])
+        return cls(
+            packet_id=UUID(data["packet_id"]),
+            packet_type=data["packet_type"],
+            source_node_id=data["source_node_id"],
+            apparatus_id=data.get("apparatus_id", "federated"),
+            channel=data["channel"],
+            timestamp_utc=ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc),
+            trust_level=TrustLevel[data.get("trust_level", "UNCLASSIFIED")],
+            confidence=float(data.get("confidence", 0.5)),
+            priority=Priority[data.get("priority", "NORMAL")],
+            ttl_seconds=int(data.get("ttl_seconds", 300)),
+            payload=data.get("payload", {}),
+            provenance=data.get("provenance", []),
+            tags=data.get("tags", []),
+            source_hash=data.get("source_hash", ""),
+        )
+
     def is_expired(self) -> bool:
         age = (datetime.now(timezone.utc) - self.timestamp_utc).total_seconds()
         return age > self.ttl_seconds

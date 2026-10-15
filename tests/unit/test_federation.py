@@ -7,7 +7,7 @@ import pytest
 from probable_intel.nexus.spec import FederationSpec, FederationPeerSpec
 from probable_intel.spine.spine import Spine
 from probable_intel.spine.packet import IntelPacket, Priority, TrustLevel
-from probable_intel.hub.federation import FederatedSpine, _downgrade_trust, _packet_to_dict, _dict_to_packet
+from probable_intel.hub.federation import FederatedSpine, _downgrade_trust
 
 
 def _make_packet(priority=Priority.NORMAL, trust=TrustLevel.RESTRICTED, tags=None) -> IntelPacket:
@@ -102,7 +102,7 @@ async def test_ingest_downgrades_trust_and_publishes():
     sub = spine.subscribe("threat.test")
 
     packet = _make_packet(trust=TrustLevel.RESTRICTED)
-    data = _packet_to_dict(packet)
+    data = packet.to_dict()
     await fed.ingest(data, peer_url="peer-a")
 
     result = await asyncio.wait_for(sub.get(), timeout=2.0)
@@ -120,7 +120,7 @@ async def test_ingest_respects_channel_filter():
     sub = spine.subscribe("threat.test")
 
     packet = _make_packet(trust=TrustLevel.RESTRICTED)  # channel="threat.test"
-    data = _packet_to_dict(packet)
+    data = packet.to_dict()
     await fed.ingest(data, peer_url="peer-b")
 
     # Should not appear on spine
@@ -157,10 +157,10 @@ def test_sse_subscriber_removed():
 # ── Serialization round-trip ──────────────────────────────────────────────────
 
 def test_packet_serialization_round_trip():
-    """_packet_to_dict → _dict_to_packet preserves key fields."""
+    """to_dict → from_dict preserves key fields."""
     packet = _make_packet(priority=Priority.HIGH, trust=TrustLevel.CLASSIFIED)
-    data = _packet_to_dict(packet)
-    restored = _dict_to_packet(data)
+    data = packet.to_dict()
+    restored = IntelPacket.from_dict(data)
 
     assert str(restored.packet_id) == str(packet.packet_id)
     assert restored.packet_type == packet.packet_type
