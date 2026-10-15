@@ -93,6 +93,13 @@ class NexusParser:
             self._build_llm(spec.llm, data["llm"])
         if "storage" in data and isinstance(data["storage"], dict):
             self._build_storage(spec.storage, data["storage"])
+            primary = data["storage"].get("primary")
+            # Only an explicitly declared path; the StorageSpec default would
+            # otherwise shadow the SQLITE_PATH override.
+            if isinstance(primary, dict) and "path" in primary:
+                for node in spec.nodes:
+                    if node.node_type == "StorageNode":
+                        node.config.setdefault("path", spec.storage.path)
         if "router" in data and isinstance(data["router"], dict):
             self._build_router(spec.router, data["router"])
         if "federation" in data and isinstance(data["federation"], dict):
@@ -116,11 +123,19 @@ class NexusParser:
                 apparatus_name=apparatus_id,
             )
 
+        # Nodes read flat keys, so lift the nested `config:` block up a level.
+        # Top-level keys win so a config entry can't clobber type/id/emit/etc.
+        config = dict(data)
+        nested = data.get("config")
+        if isinstance(nested, dict):
+            for key, value in nested.items():
+                config.setdefault(key, value)
+
         spec = NodeSpec(
             node_type=node_type,
             node_id=node_id,
             apparatus_id=apparatus_id,
-            config=data,
+            config=config,
         )
 
         # targets
