@@ -195,7 +195,7 @@ class BaseNode(ABC):
             max_errors: Threshold for circuit breaker to open
             open_seconds: Duration to keep circuit open
         """
-        self._cb_failure(key, max_errors, open_seconds)
+        self._cb_failure(key, max_errors=max_errors, open_seconds=open_seconds)
         log.error("[%s] fetch failed for %r: %s", self.node_id, key, exc)
 
     def health(self) -> dict:
