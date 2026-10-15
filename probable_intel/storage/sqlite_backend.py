@@ -47,6 +47,10 @@ class SQLiteBackend:
         await self._db.commit()
         log.info("sqlite backend opened: %s", self._path)
 
+    @property
+    def connection(self) -> aiosqlite.Connection | None:
+        return self._db
+
     async def close(self) -> None:
         if self._db:
             await self._db.close()

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import fnmatch
 import logging
 import time
 from pathlib import Path
+from urllib.parse import urlsplit
 
+from ..nexus.errors import NEXUSError
 from ..nexus.loader import NexusLoader
 from ..nexus.spec import ApparatusSpec
 from ..spine.spine import Spine
@@ -33,13 +36,17 @@ class Hub:
 
     def load_apparatus(self, path: Path | str) -> ApparatusSpec:
         spec = self._loader.load(Path(path))
+        self._select_spine(spec)
         self._apparatuses.append(spec)
+        nodes = []
         for node_spec in spec.nodes:
             node = self._factory.create(node_spec, self.spine)
             self._registry.register(node)
+            nodes.append(node)
 
         # Wire KnowledgeGraphNode references into AttributionNodes
         self._wire_kg_references()
+        self._wire_fingerprint_defense(nodes)
 
         # Start federation if configured
         if spec.federation.enabled and not self._federation:
@@ -52,6 +59,29 @@ class Hub:
             len(spec.nodes),
         )
         return spec
+
+    def _select_spine(self, spec: ApparatusSpec) -> None:
+        """Switch to a RedisSpine when the apparatus asks for one.
+
+        Nodes capture the spine at construction, so the switch is only possible
+        before any node is registered. Apparatuses without a `spine: redis` block
+        join whatever spine the hub already has.
+        """
+        if spec.spine.backend != "redis":
+            return
+        from ..spine.redis_spine import RedisSpine
+
+        if isinstance(self.spine, RedisSpine):
+            return
+        if self._registry.all_ids():
+            raise NEXUSError(
+                "spine backend 'redis' must be declared by the first apparatus loaded "
+                "(nodes are already attached to the in-memory spine)",
+                apparatus_name=spec.name,
+            )
+        self.spine = RedisSpine(spec.spine.url, max_len=spec.spine.max_len)
+        url = urlsplit(spec.spine.url)  # never log credentials embedded in the URL
+        log.info("hub: using Redis spine at %s://%s:%s", url.scheme, url.hostname, url.port or 6379)
 
     def _wire_kg_references(self) -> None:
         kg_nodes = {
@@ -67,30 +97,52 @@ class Hub:
                     node._kg_node = kg_nodes[kg_id]  # type: ignore[attr-defined]
                     log.debug("wired %s._kg_node → %s", node.node_id, kg_id)
 
+    def _wire_fingerprint_defense(self, nodes: list) -> None:
+        """Give each node in one apparatus its FingerprintDefenseNode, if it has one.
+
+        Harvesters call node._before_request() per outbound request, which reports
+        it to this guard and sleeps the jitter it returns. Scoped per apparatus so
+        one apparatus's guard never throttles another's harvesters.
+        """
+        guards = [n for n in nodes if n.__class__.__name__ == "FingerprintDefenseNode"]
+        if not guards:
+            return
+        if len(guards) > 1:
+            log.warning(
+                "apparatus has %d FingerprintDefenseNodes; using %s",
+                len(guards), guards[0].node_id,
+            )
+        for node in nodes:
+            if node not in guards:
+                node._request_guard = guards[0]
+        log.debug("wired %s as request guard for %d node(s)", guards[0].node_id, len(nodes) - len(guards))
+
     async def run(self) -> None:
         log.info("hub starting %d node(s)", len(self._registry.all_ids()))
-        self._health.start()
-        await self._lifecycle.start_all()
-
-        if self._federation is not None:
-            self._federation.start()
-            log.info("hub: federation started (%d peers)", len(self._federation._spec.peers))
-
-        self._background_tasks.append(
-            asyncio.create_task(self._directive_loop(), name="hub-directives")
-        )
-
-        log.info("hub ready — all nodes running")
         try:
+            # Inside the try so a node setup() failure still shuts everything down.
+            # Subscribe before nodes start: harvesters fetch immediately, so the
+            # first directives can be published while start_all() is still running.
+            directives = self.spine.subscribe("system.task.directives")
+            self._background_tasks.append(
+                asyncio.create_task(self._directive_loop(directives), name="hub-directives")
+            )
+            self._health.start()
+            await self._lifecycle.start_all()
+
+            if self._federation is not None:
+                self._federation.start()
+                log.info("hub: federation started (%d peers)", len(self._federation._spec.peers))
+
+            log.info("hub ready — all nodes running")
             await asyncio.Event().wait()  # run until cancelled
         except asyncio.CancelledError:
             pass
         finally:
             await self._shutdown()
 
-    async def _directive_loop(self) -> None:
+    async def _directive_loop(self, sub) -> None:
         """Apply TaskDirectivePackets from system.task.directives channel."""
-        sub = self.spine.subscribe("system.task.directives")
         try:
             while True:
                 packet = await sub.get()
@@ -121,21 +173,44 @@ class Hub:
             **payload, "_applied_at": time.time(),
         }
 
-        node = self._registry.get(target_id)
-        if node is None:
-            log.debug("hub: directive target %r not found (may use wildcard)", target_id)
+        targets = [
+            node for node in self._registry.all_nodes()
+            if fnmatch.fnmatchcase(node.node_id, target_id)
+        ]
+        if not targets:
+            log.debug("hub: directive target %r matched no nodes", target_id)
             return
+        for node in targets:
+            self._apply_directive_to(node, dtype, params, ttl)
 
+    def _apply_directive_to(self, node, dtype: str, params: dict, ttl: int) -> None:
+        target_id = node.node_id
         try:
             if dtype == "add_keyword_filter" and hasattr(node, "_keywords"):
-                kw = str(params.get("keyword", ""))
-                if kw:
-                    node._keywords.add(kw)  # type: ignore[attr-defined]
+                kw = str(params.get("keyword", "")).lower()
+                keywords = node._keywords  # type: ignore[attr-defined]
+                if kw and kw not in keywords:
+                    # FeedNode keeps a list; other nodes may keep a set.
+                    if isinstance(keywords, set):
+                        keywords.add(kw)
+                    else:
+                        keywords.append(kw)
                     log.info("hub: added keyword filter %r to %s", kw, target_id)
 
-            elif dtype == "expand_collection" and hasattr(node, "_interval"):
-                node._interval = max(30.0, node._interval * 0.5)  # type: ignore[attr-defined]
-                log.info("hub: expanded collection on %s → interval %.0fs", target_id, node._interval)
+            elif dtype == "expand_collection":
+                # Increase polling frequency
+                for attr in ("_interval_seconds", "_interval"):
+                    if hasattr(node, attr):
+                        cur = getattr(node, attr)
+                        setattr(node, attr, max(30, int(cur * 0.5)))
+                        log.info("hub: expanded collection on %s → interval %ds", target_id, max(30, int(cur * 0.5)))
+                        break
+                # Inject a new URL target if provided
+                new_url = str(params.get("url", ""))
+                if new_url and hasattr(node, "_feed_urls"):
+                    if new_url not in node._feed_urls:  # type: ignore[attr-defined]
+                        node._feed_urls.append(new_url)  # type: ignore[attr-defined]
+                        log.info("hub: injected feed URL into %s: %s", target_id, new_url)
 
             elif dtype == "pause_channel":
                 node._paused_until = time.time() + ttl
@@ -160,6 +235,9 @@ class Hub:
             await self._federation.stop()
         await self._health.stop()
         await self._lifecycle.stop_all()
+        aclose = getattr(self.spine, "aclose", None)  # RedisSpine connections
+        if aclose is not None:
+            await aclose()
         log.info("hub stopped")
 
     def status(self) -> dict:

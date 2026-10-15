@@ -4,13 +4,15 @@ import asyncio
 import logging
 import time
 from abc import ABC, abstractmethod
+from collections import deque
 from enum import auto, Enum
 from typing import TYPE_CHECKING
+
+from ..spine.packet import IntelPacket, Priority
 
 if TYPE_CHECKING:
     from ..nexus.spec import NodeSpec
     from ..spine.spine import Spine
-    from ..spine.packet import IntelPacket
 
 log = logging.getLogger(__name__)
 
@@ -41,6 +43,16 @@ class BaseNode(ABC):
         self._last_heartbeat = 0.0
         self._stop_event = asyncio.Event()
         self._paused_until: float = 0.0  # set by Hub directive to pause this node
+        self._target_errors: dict[str, int] = {}    # key → consecutive error count
+        self._circuit_open: dict[str, float] = {}   # key → open_until timestamp
+        self._ready_packets: deque[IntelPacket] = deque()  # received by _wait_any, not yet returned
+        # FingerprintDefenseNode in this apparatus, wired by Hub; see _before_request().
+        self._request_guard = None
+        # Emit config — every node reads spec.emit once here; override in setup() if needed
+        self._emit_channel: str = spec.emit.channel if spec.emit else ""
+        self._emit_priority: Priority = (
+            Priority[spec.emit.priority.upper()] if spec.emit else Priority.NORMAL
+        )
 
     # ── lifecycle ──────────────────────────────────────────────────────────
 
@@ -130,10 +142,104 @@ class BaseNode(ABC):
 
     # ── helpers ────────────────────────────────────────────────────────────
 
-    async def emit(self, channel: str, packet: "IntelPacket") -> None:
+    async def emit(self, channel: str, packet: IntelPacket) -> None:
         await self.spine.publish(channel, packet)
 
+    async def _wait_any(self, subscriptions: list) -> IntelPacket | None:
+        """Block until any subscribed channel delivers a packet.
+
+        Returns None (after a 1-second sleep) when subscriptions is empty, so
+        callers can do ``if (packet := await self._wait_any(...)) is None: return``
+        and the run loop will yield control without busy-spinning.
+        """
+        if self._ready_packets:
+            return self._ready_packets.popleft()
+        if not subscriptions:
+            await asyncio.sleep(1.0)
+            return None
+        tasks = [asyncio.create_task(sub.get()) for sub in subscriptions]
+        try:
+            done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            for t in pending:
+                t.cancel()
+            if pending:
+                # A cancelled read can still finish with a packet (network clients
+                # may ignore cancellation once data has arrived), so let them settle.
+                await asyncio.wait(pending)
+        except asyncio.CancelledError:
+            for t in tasks:
+                t.cancel()
+            raise
+        # Several reads can finish together, each having already taken its packet
+        # off its subscription — buffer the extras instead of dropping them.
+        packets = [
+            t.result() for t in tasks
+            if t in done or (not t.cancelled() and t.exception() is None)
+        ]
+        self._ready_packets.extend(packets[1:])
+        return packets[0]
+
+    async def _before_request(self, url: str) -> None:
+        """Call immediately before each outbound collection request.
+
+        With a FingerprintDefenseNode wired in, the request is reported to it
+        (it publishes an audit event on ci.opsec.audit for OpSecNode) and the
+        jitter it returns is slept, so requests don't fire in a machine-regular
+        burst. A no-op when the apparatus has no FingerprintDefenseNode.
+        """
+        if self._request_guard is None:
+            return
+        identity = f"{self.node_id}/{self.spec.identity_profile}"
+        delay = await self._request_guard.report_request(identity, url, self.node_id)
+        if delay > 0:
+            await asyncio.sleep(delay)
+
+    # ── per-target circuit breaker ─────────────────────────────────────────
+
+    def _cb_check(self, key: str) -> bool:
+        """Return True if the circuit is open (caller should skip this target)."""
+        return time.time() < self._circuit_open.get(key, 0.0)
+
+    def _cb_success(self, key: str) -> None:
+        self._target_errors.pop(key, None)
+        self._circuit_open.pop(key, None)
+
+    def _cb_failure(
+        self, key: str, *, max_errors: int = 5, open_seconds: float = 300.0
+    ) -> None:
+        count = self._target_errors.get(key, 0) + 1
+        self._target_errors[key] = count
+        if count >= max_errors:
+            self._circuit_open[key] = time.time() + open_seconds
+            log.warning(
+                "node %s: circuit open for %r (%.0fs) after %d consecutive errors",
+                self.node_id, key, open_seconds, count,
+            )
+
+    async def _handle_fetch_error(
+        self, key: str, exc: Exception, max_errors: int = 5, open_seconds: int = 300
+    ) -> None:
+        """Standardized error handling: log, update circuit breaker, optionally emit error packet.
+
+        Args:
+            key: Target/resource identifier for circuit breaker tracking
+            exc: The exception that occurred
+            max_errors: Threshold for circuit breaker to open
+            open_seconds: Duration to keep circuit open
+        """
+        self._cb_failure(key, max_errors=max_errors, open_seconds=open_seconds)
+        log.error("[%s] fetch failed for %r: %s", self.node_id, key, exc)
+
     def health(self) -> dict:
+        """Return node health status dict.
+
+        Returns:
+            Dict with keys:
+            - node_id: str — unique node identifier
+            - state: str — current NodeState name (IDLE, RUNNING, ERROR, etc.)
+            - error_count: int — consecutive errors since last success
+            - last_heartbeat: float — Unix timestamp of last heartbeat, 0.0 if never
+        """
         return {
             "node_id": self.node_id,
             "state": self.state.name,

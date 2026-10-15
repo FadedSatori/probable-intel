@@ -15,6 +15,7 @@ def _lazy_imports() -> dict[str, type[BaseNode]]:
     from ..nodes.harvesters.web_node import WebNode
     from ..nodes.harvesters.api_node import ApiNode
     from ..nodes.harvesters.social_node import SocialNode
+    from ..nodes.harvesters.recon_node import ReconNode
     from ..nodes.analysts.sentiment_node import SentimentNode
     from ..nodes.analysts.entity_node import EntityExtractorNode
     from ..nodes.analysts.threat_node import ThreatAssessNode
@@ -34,6 +35,7 @@ def _lazy_imports() -> dict[str, type[BaseNode]]:
         "WebNode": WebNode,
         "ApiNode": ApiNode,
         "SocialNode": SocialNode,
+        "ReconNode": ReconNode,
         "SentimentNode": SentimentNode,
         "EntityExtractorNode": EntityExtractorNode,
         "ThreatAssessNode": ThreatAssessNode,
@@ -51,15 +53,37 @@ def _lazy_imports() -> dict[str, type[BaseNode]]:
 
 
 class NodeFactory:
+    """Factory for instantiating node classes from NodeSpec.
+
+    Uses lazy imports to avoid circular dependencies: the node registry is built
+    on first use and cached. Lookup is O(1) in the cached registry.
+
+    Raises NEXUSError if a node type is unknown.
+    """
+
     def __init__(self) -> None:
+        """Initialize factory with empty (lazily-populated) registry."""
         self._registry: dict[str, type[BaseNode]] | None = None
 
     def _get_registry(self) -> dict[str, type[BaseNode]]:
+        """Get or build the node type registry via lazy imports."""
         if self._registry is None:
             self._registry = _lazy_imports()
         return self._registry
 
     def create(self, spec: "NodeSpec", spine: "Spine") -> BaseNode:
+        """Create a node instance from spec and spine.
+
+        Args:
+            spec: NodeSpec with node_type and configuration.
+            spine: Spine instance for inter-node communication.
+
+        Returns:
+            An instance of the specified node type.
+
+        Raises:
+            NEXUSError: If node type is unknown.
+        """
         registry = self._get_registry()
         cls = registry.get(spec.node_type)
         if cls is None:

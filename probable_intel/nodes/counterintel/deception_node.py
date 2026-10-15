@@ -93,7 +93,7 @@ class DeceptionNode(BaseNode):
             source_node_id=self.node_id,
             apparatus_id=self.apparatus_id,
             channel=_TRIGGER_CHANNEL,
-            payload=trigger,
+            payload={**trigger, "severity": "CRITICAL"},
             priority=Priority.CRITICAL,
             trust_level=TrustLevel.CLASSIFIED,
         )

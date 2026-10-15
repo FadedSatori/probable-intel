@@ -198,3 +198,66 @@ async def test_api_node_preset_nvd_merge():
     assert resolved["response_path"] == _PRESETS["nvd"]["response_path"]
     assert resolved["auth_env"] == "NVD_API_KEY"
     await node.teardown()
+
+
+@pytest.mark.asyncio
+async def test_api_node_circuit_breaker_opens_after_failures(respx_mock):
+    """After 5 consecutive HTTP errors the circuit opens and skips the target."""
+    spine = Spine()
+    respx_mock.get("https://api.example.com/bad").mock(
+        return_value=httpx.Response(503)
+    )
+    spec = _make_spec(targets=[{
+        "type": "api",
+        "url": "https://api.example.com/bad",
+        "response_path": "items",
+        "id_field": "id",
+    }])
+    node = ApiNode(spec, spine)
+    await node.setup()
+
+    url = "https://api.example.com/bad"
+    # Drive 5 failures to open the circuit
+    for _ in range(5):
+        await node._fetch(node._targets[0])
+
+    assert node._cb_check(url), "circuit should be open after 5 failures"
+
+    # Sixth call must skip (circuit open); respx would raise if it made a real request
+    respx_mock.get(url).mock(side_effect=AssertionError("should not be called"))
+    await node._fetch(node._targets[0])  # should return early without calling respx
+
+    await node.teardown()
+
+
+@pytest.mark.asyncio
+async def test_api_node_circuit_breaker_resets_on_success(respx_mock):
+    """A successful fetch resets the error counter."""
+    spine = Spine()
+    url = "https://api.example.com/flaky"
+    respx_mock.get(url).mock(return_value=httpx.Response(503))
+
+    spec = _make_spec(targets=[{
+        "type": "api",
+        "url": url,
+        "response_path": "items",
+        "id_field": "id",
+    }])
+    node = ApiNode(spec, spine)
+    await node.setup()
+
+    # 4 failures (below threshold)
+    for _ in range(4):
+        await node._fetch(node._targets[0])
+
+    assert node._target_errors.get(url, 0) == 4
+    assert not node._cb_check(url), "circuit should still be closed"
+
+    # Now succeed
+    respx_mock.get(url).mock(return_value=httpx.Response(200, json=[]))
+    await node._fetch(node._targets[0])
+
+    assert node._target_errors.get(url, 0) == 0, "error counter should reset on success"
+    assert not node._cb_check(url)
+
+    await node.teardown()

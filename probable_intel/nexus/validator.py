@@ -101,12 +101,4 @@ class ApparatusValidator:
             )
 
     def _check_trust_level_consistency(self, spec: ApparatusSpec) -> None:
-        trust_order = {"unclassified": 0, "restricted": 1, "classified": 2, "top_secret": 3}
-        apparatus_trust = trust_order.get(spec.trust_level, 0)
-
-        for node in spec.nodes:
-            if node.emits_channel:
-                # In future: channel-level trust annotations; for now just validate apparatus level
-                pass
-            # Nodes that subscribe to external channels at higher trust are flagged
-            _ = apparatus_trust  # placeholder for future cross-apparatus trust checks
+        """No-op until channels carry trust annotations — nothing to compare yet."""

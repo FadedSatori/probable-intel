@@ -4,13 +4,13 @@ import asyncio
 import hashlib
 import logging
 import random
-from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 import httpx
 
 from ..base import BaseNode
-from ...spine.packet import IntelPacket, Priority, TrustLevel
+from ._feed_entry import entry_published, entry_text, entry_title, entry_url
+from ...spine.packet import IntelPacket, TrustLevel
 
 if TYPE_CHECKING:
     from ...nexus.spec import NodeSpec
@@ -18,20 +18,20 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
+SEEN_HASHES_CAP = 50_000
+
 
 class FeedNode(BaseNode):
     """Ingests RSS/Atom feeds and emits RawFeedPackets."""
 
     def __init__(self, spec: "NodeSpec", spine: "Spine") -> None:
         super().__init__(spec, spine)
-        self._seen_hashes: set[str] = set()
+        self._seen_hashes: dict[str, None] = {}  # insertion-ordered, oldest first
         self._feed_urls: list[str] = []
         self._interval_seconds: int = 900
         self._keywords: list[str] = []
         self._exclude_keywords: list[str] = []
         self._min_word_count: int = 0
-        self._emit_channel: str = ""
-        self._emit_priority: Priority = Priority.NORMAL
         self._client: httpx.AsyncClient | None = None
 
     async def setup(self) -> None:
@@ -39,7 +39,16 @@ class FeedNode(BaseNode):
         self._client = httpx.AsyncClient(
             follow_redirects=True,
             timeout=30,
-            headers={"User-Agent": "probable-intel/0.1 feed-reader"},
+            trust_env=True,
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) "
+                    "Gecko/20100101 Firefox/128.0"
+                ),
+                "Accept": "application/rss+xml, application/atom+xml, application/xml;q=0.9, */*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.5",
+                "Cache-Control": "no-cache",
+            },
         )
         if not self._feed_urls:
             log.warning("node %s: no feed targets configured", self.node_id)
@@ -51,10 +60,6 @@ class FeedNode(BaseNode):
         self._keywords = [kw.lower() for kw in filters.get("keywords", [])]
         self._exclude_keywords = [kw.lower() for kw in filters.get("exclude_keywords", [])]
         self._min_word_count = filters.get("min_word_count", 0)
-
-        if self.spec.emit:
-            self._emit_channel = self.spec.emit.channel
-            self._emit_priority = Priority[self.spec.emit.priority.upper()]
 
     async def teardown(self) -> None:
         if self._client:
@@ -72,12 +77,17 @@ class FeedNode(BaseNode):
     async def _fetch_feed(self, url: str) -> None:
         import atoma
 
+        if self._cb_check(url):
+            log.debug("node %s: circuit open for %s — skipping", self.node_id, url)
+            return
+
+        await self._before_request(url)
         try:
             resp = await self._client.get(url)
             resp.raise_for_status()
             raw = resp.content
         except Exception as e:
-            log.error("node %s: failed to fetch %s: %s", self.node_id, url, e)
+            await self._handle_fetch_error(url, e)
             return
 
         try:
@@ -88,21 +98,23 @@ class FeedNode(BaseNode):
                 feed = atoma.parse_atom_bytes(raw)
                 entries = feed.entries
             except Exception as e:
-                log.error("node %s: failed to parse feed %s: %s", self.node_id, url, e)
+                await self._handle_fetch_error(url, e)
                 return
 
+        self._cb_success(url)
+
         for entry in entries:
-            content = self._extract_content(entry)
+            content = entry_text(entry)
             if not self._passes_filters(content):
                 continue
 
             content_hash = hashlib.sha256(content.encode()).hexdigest()[:16]
             if content_hash in self._seen_hashes:
                 continue
-            self._seen_hashes.add(content_hash)
-            # Cap memory footprint
-            if len(self._seen_hashes) > 50_000:
-                self._seen_hashes = set(list(self._seen_hashes)[-25_000:])
+            self._seen_hashes[content_hash] = None
+            if len(self._seen_hashes) > SEEN_HASHES_CAP:
+                for old in list(self._seen_hashes)[: SEEN_HASHES_CAP // 2]:
+                    del self._seen_hashes[old]
 
             packet = IntelPacket(
                 packet_type="RawFeedPacket",
@@ -110,10 +122,10 @@ class FeedNode(BaseNode):
                 apparatus_id=self.apparatus_id,
                 channel=self._emit_channel,
                 payload={
-                    "title": getattr(entry, "title", "") or "",
-                    "url": str(getattr(entry, "url", "") or getattr(entry, "id_", "") or ""),
+                    "title": entry_title(entry),
+                    "url": entry_url(entry),
                     "content": content,
-                    "published": self._parse_date(entry),
+                    "published": entry_published(entry),
                     "feed_url": url,
                     "tags": [],
                 },
@@ -123,16 +135,7 @@ class FeedNode(BaseNode):
             )
             if self._emit_channel:
                 await self.emit(self._emit_channel, packet)
-            log.debug("node %s emitted entry: %s", self.node_id, getattr(entry, "title", "?"))
-
-    def _extract_content(self, entry: object) -> str:
-        for attr in ("description", "summary", "content"):
-            val = getattr(entry, attr, None)
-            if val:
-                if isinstance(val, list):
-                    return str(val[0]) if val else ""
-                return str(val)
-        return ""
+            log.debug("node %s emitted entry: %s", self.node_id, packet.payload["title"])
 
     def _passes_filters(self, text: str) -> bool:
         lower = text.lower()
@@ -143,10 +146,3 @@ class FeedNode(BaseNode):
         if self._keywords and not any(kw in lower for kw in self._keywords):
             return False
         return True
-
-    def _parse_date(self, entry: object) -> str:
-        for attr in ("pub_date", "updated", "published", "created"):
-            val = getattr(entry, attr, None)
-            if val:
-                return str(val)
-        return datetime.now(timezone.utc).isoformat()

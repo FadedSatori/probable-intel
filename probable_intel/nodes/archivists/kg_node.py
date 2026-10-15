@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import time
@@ -8,7 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ..base import BaseNode
-from ...spine.packet import IntelPacket, Priority, TrustLevel
+from ...spine.packet import IntelPacket, TrustLevel
 
 if TYPE_CHECKING:
     from ...nexus.spec import NodeSpec
@@ -37,8 +36,6 @@ class KnowledgeGraphNode(BaseNode):
     def __init__(self, spec: "NodeSpec", spine: "Spine") -> None:
         super().__init__(spec, spine)
         self._subscriptions: list = []
-        self._emit_channel: str = ""
-        self._emit_priority: Priority = Priority.NORMAL
 
         self._persist_path: Path | None = None
         self._emit_interval: float = 300.0
@@ -72,10 +69,6 @@ class KnowledgeGraphNode(BaseNode):
         self._min_edge_weight = int(cfg.get("min_edge_weight", 2))
         self._max_nodes = int(cfg.get("max_nodes", 10_000))
 
-        if self.spec.emit:
-            self._emit_channel = self.spec.emit.channel
-            self._emit_priority = Priority[self.spec.emit.priority.upper()]
-
         self._subscriptions = [
             self.spine.subscribe(ch) for ch in self.spec.subscribe_channels
         ]
@@ -87,16 +80,9 @@ class KnowledgeGraphNode(BaseNode):
         self._save_graph()
 
     async def run(self) -> None:
-        if not self._subscriptions:
-            await asyncio.sleep(1)
+        packet = await self._wait_any(self._subscriptions)
+        if packet is None:
             return
-
-        tasks = [asyncio.create_task(sub.get()) for sub in self._subscriptions]
-        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-        for t in pending:
-            t.cancel()
-
-        packet: IntelPacket = next(iter(done)).result()
         await self._ingest(packet)
 
         now = time.time()

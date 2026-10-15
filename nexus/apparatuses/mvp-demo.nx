@@ -27,7 +27,7 @@ nodes:
   - type: SentimentNode
     id: "analyst.sentiment.security"
     subscribe:
-      channels: ["raw.feed.security"]
+      channels: ["raw.feed.security", "raw.recon.security"]
     backend:
       primary: "vader"
       fallback: "llm"
@@ -94,6 +94,18 @@ nodes:
       channel: "analysis.kg.summary"
       priority: low
 
+  - type: ReconNode
+    id: "recon.entities.security"
+    subscribe:
+      channels: ["analysis.kg.summary"]
+    config:
+      min_entity_degree: 2
+      max_entities_per_run: 3
+      cooldown_hours: 6
+    emit:
+      channel: "raw.recon.security"
+      priority: normal
+
   - type: AlertNode
     id: "sentinel.alert.security"
     subscribe:
@@ -121,6 +133,14 @@ nodes:
     emit:
       channel: "ci.opsec.events"
       priority: normal
+
+  - type: FingerprintDefenseNode
+    id: "ci.fingerprint.main"
+    # Wired by the Hub into every harvester in this apparatus: jitters each outbound
+    # request and audits it to OpSecNode on the fixed channel ci.opsec.audit.
+    config:
+      jitter_mu: 2.1        # median delay before each request, seconds (0.5–30 clamp)
+      jitter_sigma: 0.8
 
   - type: DeceptionNode
     id: "ci.deception.main"

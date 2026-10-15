@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections import defaultdict
 from typing import AsyncIterator, Callable, Awaitable
 
@@ -11,12 +12,16 @@ from .packet import IntelPacket
 log = logging.getLogger(__name__)
 
 
+_DROP_LOG_INTERVAL = 60.0  # log at most once per minute per channel
+
+
 class Spine:
     """In-process async message bus. Swap for RedisSpine to go distributed."""
 
     def __init__(self) -> None:
         self._channels: dict[str, Channel] = {}
         self._subscribers: dict[str, list[asyncio.Queue[IntelPacket]]] = defaultdict(list)
+        self._last_drop_log: dict[str, float] = {}  # channel → last warning timestamp
 
     def _ensure_channel(self, name: str) -> Channel:
         if name not in self._channels:
@@ -27,11 +32,28 @@ class Spine:
         if packet.is_expired():
             log.debug("dropping expired packet %s on %s", packet.packet_id, channel_name)
             return
+        # Delivery is per-subscriber queue; nothing drains Channel's lanes, so
+        # only its metrics are updated here (storing packets there leaked them).
         ch = self._ensure_channel(channel_name)
-        await ch.put(packet)
-        for sub_queue in self._subscribers.get(channel_name, []):
+        ch.metrics.published += 1
+        ch.metrics.last_publish_ts = time.time()
+        subscribers = self._subscribers.get(channel_name, [])
+        for sub_queue in subscribers:
             if not sub_queue.full():
                 await sub_queue.put(packet)
+            else:
+                ch.metrics.dropped += 1
+                now = time.time()
+                if now - self._last_drop_log.get(channel_name, 0.0) >= _DROP_LOG_INTERVAL:
+                    self._last_drop_log[channel_name] = now
+                    log.warning(
+                        "spine: subscriber queue full on %r — dropping packets"
+                        " (total drops on channel: %d)",
+                        channel_name, ch.metrics.dropped,
+                    )
+        depth = max((q.qsize() for q in subscribers), default=0)
+        if depth > ch.metrics.max_depth_seen:
+            ch.metrics.max_depth_seen = depth
 
     def subscribe(self, channel_name: str) -> "SpineSubscription":
         q: asyncio.Queue[IntelPacket] = asyncio.Queue(maxsize=5_000)

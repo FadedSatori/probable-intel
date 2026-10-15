@@ -23,46 +23,6 @@ def _downgrade_trust(level: TrustLevel) -> TrustLevel:
     return values[max(0, idx - 1)]
 
 
-def _packet_to_dict(packet: IntelPacket) -> dict:
-    return {
-        "packet_id": str(packet.packet_id),
-        "packet_type": packet.packet_type,
-        "source_node_id": packet.source_node_id,
-        "apparatus_id": packet.apparatus_id,
-        "channel": packet.channel,
-        "timestamp_utc": packet.timestamp_utc.isoformat(),
-        "trust_level": packet.trust_level.name,
-        "confidence": packet.confidence,
-        "priority": packet.priority.name,
-        "ttl_seconds": packet.ttl_seconds,
-        "payload": packet.payload,
-        "provenance": packet.provenance,
-        "tags": packet.tags,
-        "source_hash": packet.source_hash,
-    }
-
-
-def _dict_to_packet(data: dict) -> IntelPacket:
-    from datetime import datetime, timezone
-    from uuid import UUID
-    return IntelPacket(
-        packet_id=UUID(data["packet_id"]),
-        packet_type=data["packet_type"],
-        source_node_id=data["source_node_id"],
-        apparatus_id=data.get("apparatus_id", "federated"),
-        channel=data["channel"],
-        timestamp_utc=datetime.fromisoformat(data["timestamp_utc"]).replace(tzinfo=timezone.utc),
-        trust_level=TrustLevel[data.get("trust_level", "UNCLASSIFIED")],
-        confidence=float(data.get("confidence", 0.5)),
-        priority=Priority[data.get("priority", "NORMAL")],
-        ttl_seconds=int(data.get("ttl_seconds", 300)),
-        payload=data.get("payload", {}),
-        provenance=data.get("provenance", []),
-        tags=data.get("tags", []),
-        source_hash=data.get("source_hash", ""),
-    )
-
-
 class FederatedSpine:
     """Bridges the local Spine to peer hubs over HTTP.
 
@@ -128,7 +88,7 @@ class FederatedSpine:
     async def ingest(self, data: dict, peer_url: str = "") -> None:
         """Receive a packet from a peer, downgrade trust, publish locally."""
         try:
-            packet = _dict_to_packet(data)
+            packet = IntelPacket.from_dict(data)
         except Exception as e:
             log.warning("federation: failed to parse incoming packet from %s: %s", peer_url, e)
             return
@@ -158,7 +118,7 @@ class FederatedSpine:
         while True:
             try:
                 packet = await self._outbound.get()
-                data = _packet_to_dict(packet)
+                data = packet.to_dict()
                 for peer in self._spec.peers:
                     if not self._should_push_to_peer(packet, peer):
                         continue

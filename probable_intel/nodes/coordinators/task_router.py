@@ -1,21 +1,19 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import time
 from typing import TYPE_CHECKING
 
 from ..base import BaseNode
-from ...spine.packet import IntelPacket, Priority
+from ..analysts.threat_node import _SEVERITY_RANK
+from ...spine.packet import IntelPacket
 
 if TYPE_CHECKING:
     from ...nexus.spec import NodeSpec
     from ...spine.spine import Spine
 
 log = logging.getLogger(__name__)
-
-_SEVERITY_RANK = {"LOW": 1, "MEDIUM": 2, "HIGH": 3, "CRITICAL": 4}
 
 _RULE_BASED_DEFAULTS = {
     # threat signal → add a keyword filter on the entity channel
@@ -40,8 +38,6 @@ class TaskRouterNode(BaseNode):
     def __init__(self, spec: "NodeSpec", spine: "Spine") -> None:
         super().__init__(spec, spine)
         self._subscriptions: list = []
-        self._emit_channel: str = ""
-        self._emit_priority: Priority = Priority.HIGH
         self._min_severity: int = _SEVERITY_RANK["HIGH"]
         self._cooldown: float = 300.0
         self._max_per_hour: int = 10
@@ -66,10 +62,6 @@ class TaskRouterNode(BaseNode):
             except Exception as e:
                 log.warning("node %s: LLM setup failed: %s", self.node_id, e)
 
-        if self.spec.emit:
-            self._emit_channel = self.spec.emit.channel
-            self._emit_priority = Priority[self.spec.emit.priority.upper()]
-
         self._subscriptions = [
             self.spine.subscribe(ch) for ch in self.spec.subscribe_channels
         ]
@@ -79,16 +71,9 @@ class TaskRouterNode(BaseNode):
             sub.close()
 
     async def run(self) -> None:
-        if not self._subscriptions:
-            await asyncio.sleep(1)
+        packet = await self._wait_any(self._subscriptions)
+        if packet is None:
             return
-
-        tasks = [asyncio.create_task(sub.get()) for sub in self._subscriptions]
-        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-        for t in pending:
-            t.cancel()
-
-        packet: IntelPacket = next(iter(done)).result()
         await self._analyze_signal(packet)
 
     async def _analyze_signal(self, packet: IntelPacket) -> None:
@@ -161,11 +146,14 @@ class TaskRouterNode(BaseNode):
             )
             try:
                 raw = await self._llm_router.complete(prompt, max_tokens=200)
-                match = __import__("re").search(r"\{.*\}", raw, __import__("re").DOTALL)
-                if match:
-                    directive = json.loads(match.group())
-                    directive.setdefault("ttl_seconds", 3600)
-                    return directive
+                # Use raw_decode to extract the first valid JSON object without
+                # greedy regex (which matches first { to last }, breaking on trailing text)
+                start = raw.find("{")
+                if start >= 0:
+                    directive, _ = json.JSONDecoder().raw_decode(raw[start:])
+                    if isinstance(directive, dict):
+                        directive.setdefault("ttl_seconds", 3600)
+                        return directive
             except Exception as e:
                 log.debug("node %s: LLM directive failed: %s", self.node_id, e)
 
@@ -176,7 +164,8 @@ class TaskRouterNode(BaseNode):
         )
         # Try to extract a useful keyword/entity from the payload
         entities = payload.get("entities", [])
-        keyword = entities[0].get("text", topic) if entities else topic
+        first = entities[0] if entities else None
+        keyword = first.get("text", topic) if isinstance(first, dict) else topic
 
         return {
             "directive_type": dtype,

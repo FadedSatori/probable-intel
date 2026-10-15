@@ -1,0 +1,53 @@
+# MITRE ATT&CK (Enterprise) lookup used by ThreatAssessNode to tag ThreatPackets.
+# Static on purpose — no live API calls. Review it when ATT&CK publishes a release.
+#
+#   techniques: technique/sub-technique ID → name + tactic shortnames
+#   keywords:   case-insensitive whole-word/phrase matches in a packet's title + content.
+#               Keep these unambiguous: a keyword should imply its technique on its own.
+#   labels:     exact ThreatAssessNode rule labels (operator-defined in .nx `rules:`).
+
+techniques:
+  T1486:     {name: "Data Encrypted for Impact", tactics: [impact]}
+  T1485:     {name: "Data Destruction", tactics: [impact]}
+  T1496:     {name: "Resource Hijacking", tactics: [impact]}
+  T1498:     {name: "Network Denial of Service", tactics: [impact]}
+  T1566:     {name: "Phishing", tactics: [initial-access]}
+  T1195:     {name: "Supply Chain Compromise", tactics: [initial-access]}
+  T1189:     {name: "Drive-by Compromise", tactics: [initial-access]}
+  T1190:     {name: "Exploit Public-Facing Application", tactics: [initial-access]}
+  T1110:     {name: "Brute Force", tactics: [credential-access]}
+  T1110.003: {name: "Password Spraying", tactics: [credential-access]}
+  T1110.004: {name: "Credential Stuffing", tactics: [credential-access]}
+  T1621:     {name: "Multi-Factor Authentication Request Generation", tactics: [credential-access]}
+  T1056.001: {name: "Keylogging", tactics: [collection, credential-access]}
+  T1505.003: {name: "Web Shell", tactics: [persistence]}
+
+keywords:
+  ransomware: [T1486]
+  wiper: [T1485]
+  cryptojacking: [T1496]
+  cryptominer: [T1496]
+  ddos: [T1498]
+  denial of service: [T1498]
+  phishing: [T1566]
+  spearphishing: [T1566]
+  supply chain attack: [T1195]
+  supply-chain attack: [T1195]
+  drive-by: [T1189]
+  watering hole: [T1189]
+  brute force: [T1110]
+  brute-force: [T1110]
+  password spraying: [T1110.003]
+  credential stuffing: [T1110.004]
+  mfa fatigue: [T1621]
+  mfa bombing: [T1621]
+  push bombing: [T1621]
+  keylogger: [T1056.001]
+  web shell: [T1505.003]
+  webshell: [T1505.003]
+
+labels:
+  ransomware-activity: [T1486]
+  phishing-campaign: [T1566]
+  public-facing-exploit: [T1190]
+  supply-chain-compromise: [T1195]

@@ -167,3 +167,80 @@ def test_mvp_demo_file_parses():
     spec = parser.parse_file(mvp_path)
     assert spec.name == "mvp-demo"
     assert len(spec.nodes) > 0
+
+
+def test_nested_config_block_is_flattened():
+    nx = """
+apparatus_name: "flatten-test"
+nodes:
+  - type: KnowledgeGraphNode
+    id: "kg.test"
+    config:
+      persist_path: "/tmp/kg.json"
+      id: "clobbered"
+"""
+    node = NexusParser().parse(nx).node_by_id("kg.test")
+    assert node is not None
+    assert node.config["persist_path"] == "/tmp/kg.json"
+    assert node.config["id"] == "kg.test"  # top-level key wins over config: entry
+
+
+def test_mvp_demo_config_blocks_reach_nodes():
+    mvp_path = Path(__file__).parent.parent.parent / "nexus" / "apparatuses" / "mvp-demo.nx"
+    spec = NexusParser().parse_file(mvp_path)
+    assert spec.node_by_id("kg.entities.security").config["persist_path"] == (
+        "/tmp/probable-intel-demo-kg.json"
+    )
+    assert spec.node_by_id("ci.attribution.main").config["kg_node_id"] == "kg.entities.security"
+    assert spec.node_by_id("archivist.storage.main").config["path"] == (
+        "/tmp/probable-intel-demo.db"
+    )
+
+
+def test_storage_path_not_injected_without_storage_block():
+    nx = """
+apparatus_name: "no-storage-block"
+nodes:
+  - type: StorageNode
+    id: "store.test"
+"""
+    node = NexusParser().parse(nx).node_by_id("store.test")
+    assert "path" not in node.config  # leaves SQLITE_PATH / built-in default in charge
+
+
+def test_node_level_storage_path_beats_apparatus_path():
+    nx = """
+apparatus_name: "node-path-wins"
+nodes:
+  - type: StorageNode
+    id: "store.test"
+    path: "/node/level.db"
+storage:
+  primary:
+    path: "/apparatus/level.db"
+"""
+    node = NexusParser().parse(nx).node_by_id("store.test")
+    assert node.config["path"] == "/node/level.db"
+
+
+def test_spine_block_defaults_to_memory():
+    assert NexusParser().parse('apparatus_name: "x"\nnodes: []\n').spine.backend == "memory"
+
+
+def test_redis_spine_block_is_parsed():
+    spec = NexusParser().parse(
+        'apparatus_name: "x"\nnodes: []\n'
+        'spine:\n  backend: redis\n  url: "redis://cache:6379/2"\n  max_len: 500\n'
+    )
+    assert (spec.spine.backend, spec.spine.url, spec.spine.max_len) == (
+        "redis", "redis://cache:6379/2", 500,
+    )
+
+
+@pytest.mark.parametrize("block, message", [
+    ("spine:\n  backend: kafka\n", "invalid spine backend"),
+    ("spine:\n  backend: redis\n", "requires a 'url'"),
+])
+def test_invalid_spine_block_is_rejected(block, message):
+    with pytest.raises(NEXUSError, match=message):
+        NexusParser().parse('apparatus_name: "x"\nnodes: []\n' + block)

@@ -5,7 +5,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from ..base import BaseNode
-from ...spine.packet import IntelPacket, Priority, TrustLevel
+from ...spine.packet import IntelPacket, TrustLevel
 
 if TYPE_CHECKING:
     from ...nexus.spec import NodeSpec
@@ -25,18 +25,12 @@ class SentimentNode(BaseNode):
         super().__init__(spec, spine)
         self._analyzer = None
         self._subscriptions = []
-        self._emit_channel: str = ""
-        self._emit_priority: Priority = Priority.NORMAL
         self._llm_threshold: float = 0.4
         self._llm_router = None
 
     async def setup(self) -> None:
         from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
         self._analyzer = SentimentIntensityAnalyzer()
-
-        if self.spec.emit:
-            self._emit_channel = self.spec.emit.channel
-            self._emit_priority = Priority[self.spec.emit.priority.upper()]
 
         backend = self.spec.backend
         self._llm_threshold = float(backend.get("llm_threshold", 0.4))
@@ -58,16 +52,9 @@ class SentimentNode(BaseNode):
             sub.close()
 
     async def run(self) -> None:
-        if not self._subscriptions:
-            await asyncio.sleep(1)
+        packet = await self._wait_any(self._subscriptions)
+        if packet is None:
             return
-
-        tasks = [asyncio.create_task(sub.get()) for sub in self._subscriptions]
-        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-        for t in pending:
-            t.cancel()
-
-        packet: IntelPacket = next(iter(done)).result()
         await self._process(packet)
 
     async def _process(self, packet: IntelPacket) -> None:

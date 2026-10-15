@@ -3,9 +3,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ..base import BaseNode
+from .attack_mapping import DEFAULT_PATH as ATTACK_MAPPING_PATH
+from .attack_mapping import AttackMapping
 from ...nexus.spec import RuleSpec
 from ...spine.packet import IntelPacket, Priority, TrustLevel
 
@@ -16,6 +19,9 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 _SEVERITY_RANK = {"LOW": 1, "MEDIUM": 2, "HIGH": 3, "CRITICAL": 4}
+
+_CONTAINS_RE = re.compile(r"^(\S+)\s+contains\s+(.+)$")
+_COMPARISON_RE = re.compile(r"^(\S+?)\s*(==|!=|>=|<=|>|<)\s*(.+)$")
 
 _SEVERITY_PRIORITY = {
     "LOW": Priority.NORMAL,
@@ -44,35 +50,9 @@ def _eval_condition(condition: str, payload: dict) -> bool:
     if condition.startswith("NOT "):
         return not _eval_condition(condition[4:], payload)
 
-    # Handle comparison: field.path OP value
-    for op in ("==", "!=", ">=", "<=", ">", "<"):
-        if op in condition:
-            left, _, right = condition.partition(op)
-            left = left.strip()
-            right = right.strip().strip('"').strip("'")
-            field_val = _get_field(left, payload)
-            if field_val is None:
-                return False
-            try:
-                if op == "==":
-                    return str(field_val) == right
-                if op == "!=":
-                    return str(field_val) != right
-                fv = float(field_val)
-                rv = float(right)
-                if op == ">=":
-                    return fv >= rv
-                if op == "<=":
-                    return fv <= rv
-                if op == ">":
-                    return fv > rv
-                if op == "<":
-                    return fv < rv
-            except (ValueError, TypeError):
-                return False
-
-    # Handle: field contains "value"
-    m = re.match(r"^(\S+)\s+contains\s+(.+)$", condition)
+    # Handle: field contains "value" — before comparisons, so operator
+    # characters inside the value (e.g. contains "<script>") aren't misparsed.
+    m = _CONTAINS_RE.match(condition)
     if m:
         field_path, val_expr = m.group(1), m.group(2).strip().strip('"').strip("'")
         field_val = _get_field(field_path, payload)
@@ -81,6 +61,30 @@ def _eval_condition(condition: str, payload: dict) -> bool:
         if isinstance(field_val, list):
             return val_expr in field_val
         return val_expr in str(field_val)
+
+    # Handle comparison: field.path OP value — the first operator after the field
+    m = _COMPARISON_RE.match(condition)
+    if m:
+        left, op, right = m.group(1), m.group(2), m.group(3).strip().strip('"').strip("'")
+        field_val = _get_field(left, payload)
+        if field_val is None:
+            return False
+        try:
+            if op == "==":
+                return str(field_val) == right
+            if op == "!=":
+                return str(field_val) != right
+            fv = float(field_val)
+            rv = float(right)
+            if op == ">=":
+                return fv >= rv
+            if op == "<=":
+                return fv <= rv
+            if op == ">":
+                return fv > rv
+            return fv < rv
+        except (ValueError, TypeError):
+            return False
 
     return False
 
@@ -104,33 +108,35 @@ class ThreatAssessNode(BaseNode):
         super().__init__(spec, spine)
         self._rules: list[RuleSpec] = []
         self._subscriptions = []
-        self._emit_channel: str = ""
-        self._emit_priority: Priority = Priority.HIGH
+        self._attack: AttackMapping | None = None
 
     async def setup(self) -> None:
         self._rules = self.spec.rules
-        if self.spec.emit:
-            self._emit_channel = self.spec.emit.channel
-            self._emit_priority = Priority[self.spec.emit.priority.upper()]
+        self._attack = self._load_attack_mapping()
         self._subscriptions = [
             self.spine.subscribe(ch) for ch in self.spec.subscribe_channels
         ]
+
+    def _load_attack_mapping(self) -> AttackMapping | None:
+        """config `attack_mapping`: false disables; a path overrides the shipped file."""
+        setting = self.spec.config.get("attack_mapping", True)
+        if setting is False:
+            return None
+        path = Path(setting) if isinstance(setting, str) else ATTACK_MAPPING_PATH
+        if not path.exists():
+            log.warning("node %s: ATT&CK mapping %s not found; threats won't be tagged",
+                        self.node_id, path)
+            return None
+        return AttackMapping.load(path)  # a malformed file fails setup loudly
 
     async def teardown(self) -> None:
         for sub in self._subscriptions:
             sub.close()
 
     async def run(self) -> None:
-        if not self._subscriptions:
-            await asyncio.sleep(1)
+        packet = await self._wait_any(self._subscriptions)
+        if packet is None:
             return
-
-        tasks = [asyncio.create_task(sub.get()) for sub in self._subscriptions]
-        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-        for t in pending:
-            t.cancel()
-
-        packet: IntelPacket = next(iter(done)).result()
         await self._assess(packet)
 
     async def _assess(self, packet: IntelPacket) -> None:
@@ -147,6 +153,11 @@ class ThreatAssessNode(BaseNode):
 
         max_severity = max(matched, key=lambda m: _SEVERITY_RANK.get(m["severity"], 0))["severity"]
         out_priority = _SEVERITY_PRIORITY.get(max_severity, Priority.NORMAL)
+        techniques = []
+        if self._attack is not None:
+            payload = packet.payload
+            text = f"{payload.get('title', '')} {payload.get('content') or payload.get('body', '')}"
+            techniques = self._attack.match((m["label"] for m in matched), text)
 
         out = packet.relay(
             self.node_id,
@@ -157,6 +168,7 @@ class ThreatAssessNode(BaseNode):
                 "threat_matches": matched,
                 "max_severity": max_severity,
                 "rule_count": len(matched),
+                "attack_techniques": techniques,
             },
             priority=out_priority,
         )

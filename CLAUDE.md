@@ -12,6 +12,9 @@ pip install atoma vaderSentiment aiosqlite httpx pyyaml networkx respx   # runti
 # Optional extras
 pip install -e ".[nlp]"      # spaCy (EntityExtractorNode full mode)
 pip install -e ".[browser]"  # Playwright + curl_cffi (WebNode, FingerprintDefenseNode)
+pip install -e ".[redis]"    # redis-py (RedisSpine — multi-process Spine over Redis Streams)
+pip install -e ".[semantic]" # sentence-transformers + sqlite-vec (semantic memory, `pi search`)
+pip install -e ".[stix]"     # stix2 (STIX 2.1 export, `pi export`)
 
 # Run all tests
 python -m pytest
@@ -19,6 +22,9 @@ python -m pytest
 # Run by tier
 python -m pytest tests/unit/
 python -m pytest tests/integration/
+
+# Spine tests run on fakeredis; add a real Redis with:
+REDIS_URL=redis://127.0.0.1:6379/0 python -m pytest
 
 # Lint / type check
 ruff check .
@@ -29,13 +35,15 @@ pi validate nexus/apparatuses/mvp-demo.nx
 pi run      nexus/apparatuses/mvp-demo.nx
 pi status   nexus/apparatuses/mvp-demo.nx
 pi watch    nexus/apparatuses/mvp-demo.nx [--channel raw.feed.security]
+pi search   "ransomware C2 infrastructure" --top-k 10 [--db /path/to/main.db]
+pi export   nexus/apparatuses/mvp-demo.nx --format stix --output bundle.json [--since ISO-8601]
 ```
 
 ## Project layout
 
 ```
 probable_intel/
-├── spine/          # IntelPacket, Spine (async bus), Channel (priority lanes)
+├── spine/          # IntelPacket, Spine (in-process bus), RedisSpine (Redis Streams), Channel
 ├── nexus/          # NEXUS DSL — parser, validator, loader, spec dataclasses, errors
 ├── hub/            # Hub orchestrator, NodeRegistry, lifecycle, health, NodeFactory, API,
 │                   # federation.py (FederatedSpine — multi-hub HTTP push/SSE pull)
@@ -55,13 +63,13 @@ probable_intel/
 │   ├── coordinators/               # TaskRouterNode (OODA loop)
 │   └── counterintel/               # OpSecNode, DeceptionNode, FingerprintDefenseNode,
 │                                   #   AttributionNode (passive adversary profiling)
-├── storage/        # SQLiteBackend (async, dedup via INSERT OR IGNORE)
-└── cli/            # Typer app — validate / run / status / watch
+├── storage/        # SQLiteBackend (async, INSERT OR IGNORE); vector_backend (semantic memory)
+├── export/         # stix_export — STIX 2.1 bundles of stored HIGH/CRITICAL threats
+└── cli/            # Typer app — validate / run / status / watch / search / export
 
 nexus/
 ├── apparatuses/    # Operator .nx files (one per mission)
-├── policies/       # Reusable OPSEC / rate-limit policy fragments
-└── templates/      # Alert templates (Jinja2)
+└── data/           # attack_mapping.yaml — static MITRE ATT&CK lookup for ThreatAssessNode
 
 tests/
 ├── unit/           # test_nexus_parser, test_spine, test_threat_eval, nodes/
@@ -83,12 +91,12 @@ Hub.load_apparatus()
   ├── FederatedSpine (optional — wires hub to peer hubs over HTTP)
   └── directive_loop (applies TaskDirectivePackets from system.task.directives)
                               ↓
-                    Spine (named channels, 4 priority lanes each)
+                    Spine (named channels; one FIFO queue per subscriber)
                               ↓
                     Nodes communicate only via IntelPacket on channels
 ```
 
-**Spine** — `spine.publish(channel, packet)` fans out to all subscribers. Each channel has four `asyncio.Queue` lanes (CRITICAL / HIGH / NORMAL / LOW). `get()` drains highest priority first.
+**Spine** — `spine.publish(channel, packet)` fans out to all subscribers. Each subscription has its own FIFO `asyncio.Queue` (5,000 cap; overflow is counted in `channel_metrics(ch).dropped`). `IntelPacket.priority` travels with the packet but does not reorder delivery. `RedisSpine` provides the same interface over Redis Streams.
 
 **IntelPacket** — all inter-node data. Key fields: `packet_type`, `source_node_id`, `apparatus_id`, `channel`, `payload: dict`, `priority: Priority`, `trust_level: TrustLevel`, `provenance: list[str]`, `source_hash` (SHA-256, for dedup), `ttl_seconds`. Use `packet.relay(new_node_id, new_channel, ...)` to forward — preserves `source_hash` and extends provenance.
 
@@ -149,6 +157,17 @@ nodes:
       - type: "fake_api_endpoint"
         path: "/api/v1/fake"
         canary_id: "canary-01"
+    config:                  # node-specific tuning; flattened into the node's config
+      persist_path: "/data/kg.json"   # (e.g. KnowledgeGraphNode)
+      # StorageNode: vector_index: false to skip semantic indexing (on when [semantic]
+      # is installed); embedding_model: "all-MiniLM-L6-v2" (must match `pi search --model`)
+      # ThreatAssessNode: attack_mapping: false to skip ATT&CK tagging, or a path to
+      # override nexus/data/attack_mapping.yaml
+
+spine:                     # optional; default is the in-process bus
+  backend: redis             # memory | redis — chosen by the first apparatus a hub loads
+  url: "redis://localhost:6379/0"
+  max_len: 10000             # approximate per-channel stream cap
 
 federation:
   enabled: true
@@ -189,11 +208,12 @@ Field access: dot-notation (`entity.type`, `threat.score`)
 
 ## Key invariants
 
-- Nodes **never** communicate directly — only via `Spine.publish()` / `Spine.subscribe()`
+- Nodes **never** communicate directly — only via `Spine.publish()` / `Spine.subscribe()`.
+  The only exceptions are service references the Hub wires at load time: AttributionNode → KnowledgeGraphNode (`_kg_node`, read-only queries) and every node → the apparatus's FingerprintDefenseNode (`_request_guard`, used by harvesters via `BaseNode._before_request()` before each outbound request). Packet data still flows only over the Spine.
 - `source_hash` is set once at packet creation and preserved through all `relay()` hops — use it for dedup, not `packet_id`
 - Operator identity never appears in `.nx` files, logs, or code — handles only
 - `SecretManager` (`hub/secrets.py`) is the only place that reads `.env`; never access `os.environ` directly for secrets elsewhere
-- `StorageNode` uses `INSERT OR IGNORE` — duplicate `source_hash` is silently dropped, not an error
+- `StorageNode` uses `INSERT OR IGNORE` keyed on `packet_id` — re-delivering the same packet is a no-op. Every pipeline stage of one article (shared `source_hash`) is stored as its own row; the semantic index embeds each `source_hash` once
 
 ## CI
 
@@ -209,7 +229,7 @@ Copy `.env.example` to `.env`. Required for full operation:
 | Variable | Purpose |
 |---|---|
 | `ANTHROPIC_API_KEY` | Anthropic Claude provider (SentimentNode, NarrativeNode, etc.) |
-| `SQLITE_PATH` | Override default DB path |
+| `SQLITE_PATH` | Override default DB path (a node `path` or apparatus `storage.primary.path` takes precedence) |
 | `ALERT_WEBHOOK_URL` | AlertNode webhook sink |
 | `MASTER_KEY` | Encryption key for classified packets |
 | `HUB_BIND_HOST` | HubAPI bind address (default `127.0.0.1`) |
@@ -224,27 +244,25 @@ Local providers (Ollama, vLLM) require no API key — set `base_url` in the `llm
 | Harvester | `WebNode` | Web page scraping (Playwright-capable) |
 | Harvester | `ApiNode` | Authenticated JSON REST APIs (NVD, CIRCL, etc.) |
 | Harvester | `SocialNode` | Reddit, HackerNews, Mastodon |
+| Harvester | `ReconNode` | Autonomous OSINT expansion via KG entity leads |
 | Analyst | `SentimentNode` | VADER + LLM fallback |
 | Analyst | `EntityExtractorNode` | spaCy NER + LLM fallback |
-| Analyst | `ThreatAssessNode` | Rule-based threat scoring |
+| Analyst | `ThreatAssessNode` | Rule-based threat scoring + MITRE ATT&CK tagging (`attack_techniques`) |
 | Analyst | `NarrativeNode` | LLM-powered rolling-window synthesis |
 | Sentinel | `AnomalyNode` | Rolling-baseline z-score anomaly detection |
 | Sentinel | `AlertNode` | Webhook + logfile alerting |
-| Archivist | `StorageNode` | SQLite persistence |
+| Archivist | `StorageNode` | SQLite persistence + semantic index for `pi search` (with `[semantic]`) |
 | Archivist | `KnowledgeGraphNode` | Entity co-occurrence graph (NetworkX) |
 | Coordinator | `TaskRouterNode` | OODA loop — LLM-enhanced collection directives |
 | CounterIntel | `OpSecNode` | Request-pattern auditing |
 | CounterIntel | `DeceptionNode` | Honeypot endpoints + canary tokens |
-| CounterIntel | `FingerprintDefenseNode` | Browser identity injection |
+| CounterIntel | `FingerprintDefenseNode` | Per-request jitter + request audit (`ci.opsec.audit`) for every harvester in its apparatus (Hub-wired) |
 | CounterIntel | `AttributionNode` | Passive adversary profiling from honeypot hits |
 
 ## What's deferred (genuinely not built)
 
-- Redis Spine adapter (replace asyncio.Queue with Redis streams for multi-process scale-out)
 - Neo4j backend for `KnowledgeGraphNode` (currently NetworkX in-memory only)
 - Textual TUI dashboard
 - `MonitorNode` (continuous watch over long-lived targets, distinct from AnomalyNode)
-- Semantic memory layer (vector embeddings + similarity retrieval)
 - Predictive threat modeling (time-series over KG history)
-- MITRE ATT&CK mapping + STIX 2.1 export
-- Autonomous OSINT expansion (ReconNode, DarkWebNode)
+- Autonomous OSINT expansion via dark web sources (DarkWebNode)

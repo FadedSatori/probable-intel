@@ -82,6 +82,13 @@ class StorageSpec:
 
 
 @dataclass
+class SpineSpec:
+    backend: str = "memory"          # memory | redis
+    url: str = ""                    # redis://host:port/db (redis backend)
+    max_len: int = 10_000            # approximate per-channel stream cap (redis backend)
+
+
+@dataclass
 class RouterSpec:
     task_router: str = ""
     overflow_policy: str = "drop_low_priority"
@@ -114,6 +121,7 @@ class ApparatusSpec:
     nodes: list[NodeSpec] = field(default_factory=list)
     llm: LLMSpec = field(default_factory=LLMSpec)
     storage: StorageSpec = field(default_factory=StorageSpec)
+    spine: SpineSpec = field(default_factory=SpineSpec)
     router: RouterSpec = field(default_factory=RouterSpec)
     federation: FederationSpec = field(default_factory=FederationSpec)
 

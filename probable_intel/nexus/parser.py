@@ -17,9 +17,9 @@ _DURATION_RE = re.compile(r"^(\d+)([smhd])$")
 _UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
 
 _VALID_NODE_TYPES = {
-    "WebNode", "FeedNode", "SocialNode", "ApiNode",
+    "WebNode", "FeedNode", "SocialNode", "ApiNode", "ReconNode",
     "SentimentNode", "EntityExtractorNode", "ThreatAssessNode", "NarrativeNode",
-    "MonitorNode", "AnomalyNode", "AlertNode",
+    "AnomalyNode", "AlertNode",
     "StorageNode", "KnowledgeGraphNode",
     "TaskRouterNode",
     "OpSecNode", "DeceptionNode", "FingerprintDefenseNode", "AttributionNode",
@@ -27,6 +27,7 @@ _VALID_NODE_TYPES = {
 
 _VALID_TRUST_LEVELS = {"unclassified", "restricted", "classified", "top_secret"}
 _VALID_PRIORITIES = {"low", "normal", "high", "critical"}
+_VALID_SPINE_BACKENDS = {"memory", "redis"}
 
 
 def _parse_duration(val: Any) -> int:
@@ -93,6 +94,15 @@ class NexusParser:
             self._build_llm(spec.llm, data["llm"])
         if "storage" in data and isinstance(data["storage"], dict):
             self._build_storage(spec.storage, data["storage"])
+            primary = data["storage"].get("primary")
+            # Only an explicitly declared path; the StorageSpec default would
+            # otherwise shadow the SQLITE_PATH override.
+            if isinstance(primary, dict) and "path" in primary:
+                for node in spec.nodes:
+                    if node.node_type == "StorageNode":
+                        node.config.setdefault("path", spec.storage.path)
+        if "spine" in data and isinstance(data["spine"], dict):
+            self._build_spine(spec, data["spine"])
         if "router" in data and isinstance(data["router"], dict):
             self._build_router(spec.router, data["router"])
         if "federation" in data and isinstance(data["federation"], dict):
@@ -116,11 +126,19 @@ class NexusParser:
                 apparatus_name=apparatus_id,
             )
 
+        # Nodes read flat keys, so lift the nested `config:` block up a level.
+        # Top-level keys win so a config entry can't clobber type/id/emit/etc.
+        config = dict(data)
+        nested = data.get("config")
+        if isinstance(nested, dict):
+            for key, value in nested.items():
+                config.setdefault(key, value)
+
         spec = NodeSpec(
             node_type=node_type,
             node_id=node_id,
             apparatus_id=apparatus_id,
-            config=data,
+            config=config,
         )
 
         # targets
@@ -231,6 +249,20 @@ class NexusParser:
             llm.max_tokens = int(data["max_tokens"])
         if "budget_per_day_usd" in data:
             llm.budget_per_day_usd = float(data["budget_per_day_usd"])
+
+    def _build_spine(self, spec: ApparatusSpec, data: dict) -> None:
+        backend = str(data.get("backend", "memory")).lower()
+        if backend not in _VALID_SPINE_BACKENDS:
+            raise NEXUSError(
+                f"invalid spine backend {backend!r}; must be one of {sorted(_VALID_SPINE_BACKENDS)}",
+                apparatus_name=spec.name,
+            )
+        url = str(data.get("url", ""))
+        if backend == "redis" and not url:
+            raise NEXUSError("spine backend 'redis' requires a 'url'", apparatus_name=spec.name)
+        spec.spine.backend = backend
+        spec.spine.url = url
+        spec.spine.max_len = int(data.get("max_len", spec.spine.max_len))
 
     def _build_storage(self, storage: StorageSpec, data: dict) -> None:
         primary = data.get("primary", {})

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import time
@@ -21,7 +20,7 @@ log = logging.getLogger(__name__)
 
 
 class AlertNode(BaseNode):
-    """Terminal node — routes ThreatPackets to webhook or logfile sinks."""
+    """Routes HIGH/CRITICAL packets to its emit channel as AlertPackets, plus optional webhook/logfile sinks."""
 
     def __init__(self, spec: "NodeSpec", spine: "Spine") -> None:
         super().__init__(spec, spine)
@@ -71,20 +70,15 @@ class AlertNode(BaseNode):
             await self._client.aclose()
 
     async def run(self) -> None:
-        if not self._subscriptions:
-            await asyncio.sleep(1)
+        packet = await self._wait_any(self._subscriptions)
+        if packet is None:
             return
-
-        tasks = [asyncio.create_task(sub.get()) for sub in self._subscriptions]
-        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-        for t in pending:
-            t.cancel()
-
-        packet: IntelPacket = next(iter(done)).result()
         await self._handle(packet)
 
     async def _handle(self, packet: IntelPacket) -> None:
-        severity = packet.payload.get("max_severity", "LOW")
+        # ThreatPackets use max_severity; counter-intel packets use severity.
+        payload = packet.payload
+        severity = str(payload.get("max_severity") or payload.get("severity") or "LOW").upper()
         if severity not in self._severity_filter:
             return
 
@@ -100,6 +94,12 @@ class AlertNode(BaseNode):
 
         alert = self._format_alert(packet, severity)
 
+        if self._emit_channel:
+            out = packet.relay(
+                self.node_id, self._emit_channel,
+                packet_type="AlertPacket", payload=alert, priority=self._emit_priority,
+            )
+            await self.emit(self._emit_channel, out)
         if self._log_path:
             await self._write_log(alert)
         if self._webhook_url and self._client:

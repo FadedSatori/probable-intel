@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import json
 import logging
+import re
 from typing import TYPE_CHECKING
 
 from ..base import BaseNode
-from ...spine.packet import IntelPacket, Priority, TrustLevel
+from ...spine.packet import IntelPacket, TrustLevel
 
 if TYPE_CHECKING:
     from ...nexus.spec import NodeSpec
@@ -15,6 +17,22 @@ log = logging.getLogger(__name__)
 _SPACY_MODEL = "en_core_web_sm"
 
 
+def _normalize_llm_entities(raw: object) -> list[dict]:
+    """LLM output is untrusted: keep {"text", "type"} dicts; bare strings become UNKNOWN."""
+    if not isinstance(raw, list):
+        return []
+    entities = []
+    for item in raw:
+        if isinstance(item, str) and item.strip():
+            entities.append({"text": item.strip(), "type": "UNKNOWN"})
+        elif isinstance(item, dict) and str(item.get("text") or "").strip():
+            entities.append({
+                "text": str(item["text"]).strip(),
+                "type": str(item.get("type") or "UNKNOWN"),
+            })
+    return entities
+
+
 class EntityExtractorNode(BaseNode):
     """NER via spaCy; emits EntityPackets."""
 
@@ -22,8 +40,6 @@ class EntityExtractorNode(BaseNode):
         super().__init__(spec, spine)
         self._nlp = None
         self._subscriptions = []
-        self._emit_channel: str = ""
-        self._emit_priority: Priority = Priority.NORMAL
         self._confidence_min: float = 0.0
         self._llm_router = None
 
@@ -50,10 +66,6 @@ class EntityExtractorNode(BaseNode):
             except Exception as e:
                 log.warning("node %s: LLM setup failed: %s", self.node_id, e)
 
-        if self.spec.emit:
-            self._emit_channel = self.spec.emit.channel
-            self._emit_priority = Priority[self.spec.emit.priority.upper()]
-
         self._subscriptions = [
             self.spine.subscribe(ch) for ch in self.spec.subscribe_channels
         ]
@@ -64,23 +76,12 @@ class EntityExtractorNode(BaseNode):
             sub.close()
 
     async def run(self) -> None:
-        if not self._subscriptions:
-            import asyncio
-            await asyncio.sleep(1)
+        packet = await self._wait_any(self._subscriptions)
+        if packet is None:
             return
-
-        import asyncio
-
-        tasks = [asyncio.create_task(sub.get()) for sub in self._subscriptions]
-        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-        for t in pending:
-            t.cancel()
-
-        packet: IntelPacket = next(iter(done)).result()
         await self._process(packet)
 
     async def _process(self, packet: IntelPacket) -> None:
-        import json
         text = packet.payload.get("content") or packet.payload.get("body", "")
         if not text:
             return
@@ -98,9 +99,9 @@ class EntityExtractorNode(BaseNode):
                         max_tokens=512,
                     )
                     # Extract JSON array from response (may have surrounding text)
-                    match = __import__("re").search(r"\[.*\]", raw, __import__("re").DOTALL)
+                    match = re.search(r"\[.*\]", raw, re.DOTALL)
                     if match:
-                        entities = json.loads(match.group())
+                        entities = _normalize_llm_entities(json.loads(match.group()))
                         tags.append("llm-entities")
                 except Exception as e:
                     log.debug("node %s: LLM entity fallback failed: %s", self.node_id, e)
