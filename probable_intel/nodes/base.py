@@ -4,6 +4,7 @@ import asyncio
 import logging
 import time
 from abc import ABC, abstractmethod
+from collections import deque
 from enum import auto, Enum
 from typing import TYPE_CHECKING
 
@@ -44,6 +45,7 @@ class BaseNode(ABC):
         self._paused_until: float = 0.0  # set by Hub directive to pause this node
         self._target_errors: dict[str, int] = {}    # key → consecutive error count
         self._circuit_open: dict[str, float] = {}   # key → open_until timestamp
+        self._ready_packets: deque[IntelPacket] = deque()  # received by _wait_any, not yet returned
         # Emit config — every node reads spec.emit once here; override in setup() if needed
         self._emit_channel: str = spec.emit.channel if spec.emit else ""
         self._emit_priority: Priority = (
@@ -148,19 +150,25 @@ class BaseNode(ABC):
         callers can do ``if (packet := await self._wait_any(...)) is None: return``
         and the run loop will yield control without busy-spinning.
         """
+        if self._ready_packets:
+            return self._ready_packets.popleft()
         if not subscriptions:
             await asyncio.sleep(1.0)
             return None
         tasks = [asyncio.create_task(sub.get()) for sub in subscriptions]
         try:
             done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-            for t in pending:
-                t.cancel()
-            return next(iter(done)).result()
         except asyncio.CancelledError:
             for t in tasks:
                 t.cancel()
             raise
+        for t in pending:
+            t.cancel()  # safe: a cancelled Queue.get() leaves its item in the queue
+        # Several gets can finish in the same tick, and each has already dequeued
+        # its packet — buffer the extras instead of dropping them.
+        packets = [t.result() for t in tasks if t in done]
+        self._ready_packets.extend(packets[1:])
+        return packets[0]
 
     # ── per-target circuit breaker ─────────────────────────────────────────
 

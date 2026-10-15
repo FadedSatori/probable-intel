@@ -72,16 +72,18 @@ class Hub:
         log.info("hub starting %d node(s)", len(self._registry.all_ids()))
         try:
             # Inside the try so a node setup() failure still shuts everything down.
+            # Subscribe before nodes start: harvesters fetch immediately, so the
+            # first directives can be published while start_all() is still running.
+            directives = self.spine.subscribe("system.task.directives")
+            self._background_tasks.append(
+                asyncio.create_task(self._directive_loop(directives), name="hub-directives")
+            )
             self._health.start()
             await self._lifecycle.start_all()
 
             if self._federation is not None:
                 self._federation.start()
                 log.info("hub: federation started (%d peers)", len(self._federation._spec.peers))
-
-            self._background_tasks.append(
-                asyncio.create_task(self._directive_loop(), name="hub-directives")
-            )
 
             log.info("hub ready — all nodes running")
             await asyncio.Event().wait()  # run until cancelled
@@ -90,9 +92,8 @@ class Hub:
         finally:
             await self._shutdown()
 
-    async def _directive_loop(self) -> None:
+    async def _directive_loop(self, sub) -> None:
         """Apply TaskDirectivePackets from system.task.directives channel."""
-        sub = self.spine.subscribe("system.task.directives")
         try:
             while True:
                 packet = await sub.get()

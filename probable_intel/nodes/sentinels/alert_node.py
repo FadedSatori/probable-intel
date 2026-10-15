@@ -20,7 +20,7 @@ log = logging.getLogger(__name__)
 
 
 class AlertNode(BaseNode):
-    """Terminal node — routes ThreatPackets to webhook or logfile sinks."""
+    """Routes HIGH/CRITICAL packets to its emit channel as AlertPackets, plus optional webhook/logfile sinks."""
 
     def __init__(self, spec: "NodeSpec", spine: "Spine") -> None:
         super().__init__(spec, spine)
@@ -92,6 +92,12 @@ class AlertNode(BaseNode):
 
         alert = self._format_alert(packet, severity)
 
+        if self._emit_channel:
+            out = packet.relay(
+                self.node_id, self._emit_channel,
+                packet_type="AlertPacket", payload=alert, priority=self._emit_priority,
+            )
+            await self.emit(self._emit_channel, out)
         if self._log_path:
             await self._write_log(alert)
         if self._webhook_url and self._client:
