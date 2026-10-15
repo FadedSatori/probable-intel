@@ -32,9 +32,13 @@ class Spine:
         if packet.is_expired():
             log.debug("dropping expired packet %s on %s", packet.packet_id, channel_name)
             return
+        # Delivery is per-subscriber queue; nothing drains Channel's lanes, so
+        # only its metrics are updated here (storing packets there leaked them).
         ch = self._ensure_channel(channel_name)
-        await ch.put(packet)
-        for sub_queue in self._subscribers.get(channel_name, []):
+        ch.metrics.published += 1
+        ch.metrics.last_publish_ts = time.time()
+        subscribers = self._subscribers.get(channel_name, [])
+        for sub_queue in subscribers:
             if not sub_queue.full():
                 await sub_queue.put(packet)
             else:
@@ -47,6 +51,9 @@ class Spine:
                         " (total drops on channel: %d)",
                         channel_name, ch.metrics.dropped,
                     )
+        depth = max((q.qsize() for q in subscribers), default=0)
+        if depth > ch.metrics.max_depth_seen:
+            ch.metrics.max_depth_seen = depth
 
     def subscribe(self, channel_name: str) -> "SpineSubscription":
         q: asyncio.Queue[IntelPacket] = asyncio.Queue(maxsize=5_000)

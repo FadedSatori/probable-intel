@@ -112,3 +112,20 @@ async def test_channel_get_cancelled_cancels_inner_tasks():
 
     # Should complete without hanging
     await asyncio.wait_for(get_with_cancel(), timeout=1.0)
+
+
+@pytest.mark.asyncio
+async def test_long_running_channel_retains_nothing_and_counts_correctly():
+    """Past 10k packets per lane, publishes must not be miscounted as drops or retained."""
+    spine = Spine()
+    sub = spine.subscribe("busy.channel")
+    total = 10_050
+    for _ in range(total):
+        await spine.publish("busy.channel", make_packet("busy.channel"))
+        await sub.get()
+
+    metrics = spine.channel_metrics("busy.channel")
+    assert metrics.published == total
+    assert metrics.dropped == 0
+    assert metrics.max_depth_seen == 1
+    assert spine._channels["busy.channel"].depth() == 0  # no packet retained in the lanes
