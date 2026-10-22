@@ -197,6 +197,16 @@ def test_subtechnique_url_uses_slash():
     assert ap["external_references"][0]["url"].endswith("/T1059/001/")
 
 
+def test_technique_without_tactics_omits_kill_chain_phases():
+    node = StixExportNode(_stix_spec(), Spine())
+    node._identity_name = "x"
+    bundle = node.build_bundle(_packet({"attack_techniques": [
+        {"technique_id": "T9999", "name": "Custom", "tactics": []}
+    ]}))
+    ap = next(o for o in bundle["objects"] if o["type"] == "attack-pattern")
+    assert "kill_chain_phases" not in ap
+
+
 def test_ids_are_deterministic():
     node = StixExportNode(_stix_spec(), Spine())
     node._identity_name = "x"

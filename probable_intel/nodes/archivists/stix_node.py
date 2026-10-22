@@ -139,18 +139,21 @@ class StixExportNode(BaseNode):
             if not tid:
                 continue
             path = tid.replace(".", "/")
-            obj = sdo(
-                "attack-pattern", tid, name=str(tech.get("name", tid)),
-                external_references=[{
+            ap_props: dict[str, Any] = {
+                "name": str(tech.get("name", tid)),
+                "external_references": [{
                     "source_name": "mitre-attack",
                     "external_id": tid,
                     "url": f"https://attack.mitre.org/techniques/{path}/",
                 }],
-                kill_chain_phases=[
-                    {"kill_chain_name": "mitre-attack", "phase_name": str(p)}
-                    for p in tech.get("tactics", [])
-                ],
-            )
+            }
+            phases = [
+                {"kill_chain_name": "mitre-attack", "phase_name": str(t)}
+                for t in tech.get("tactics", [])
+            ]
+            if phases:  # STIX requires at least one entry when the property is present
+                ap_props["kill_chain_phases"] = phases
+            obj = sdo("attack-pattern", tid, **ap_props)
             objects.append(obj)
             refs.append(obj["id"])
 
