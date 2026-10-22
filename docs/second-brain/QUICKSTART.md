@@ -54,6 +54,8 @@ pi brain surprise 0.5 0.9                      # → 0.5310 bits
 pi brain mark raw:3fa9c1d2e4b5 distilled
 pi brain log note "Wrote PPR note by hand"
 pi brain seal                                  # seal-probe pass/miss history per session
+pi brain doctor                                # is everything wired? runs the real hook as a self-test
+pi brain upgrade [--dry-run] [--absolute-pi]   # bring an existing vault up to the current release
 ```
 
 All commands find the vault by walking up from the current directory, or take `--vault PATH`.
@@ -66,6 +68,17 @@ The vault ships `.claude/settings.json`, which wires four Claude Code hooks to `
 - **Verify:** every note written is linted at once, and problems go straight back to Claude.
 - **Probe:** every 5th prompt carries `[seal k]`. Claude must end its reply with `seal: <word k>` from the list in constitution §10, from memory. A miss warns you and re-injects the rules; a repeat means start a fresh session. `pi brain seal` shows the history.
 - **Honeytoken:** outbound calls carrying the canary token in `wiki/journal/canary.md` are blocked.
+
+**Check it works:** run `pi brain doctor` in the vault. It confirms the files, seal list, skills and hook wiring, then runs the real PreToolUse hook against a forbidden write and expects a denial. If Claude Code is launched from a desktop app, it may not see your shell's PATH. In that case run `pi brain upgrade --absolute-pi` once, so the hooks call `pi` by its full path.
+
+**Vault from an older release?** `pi brain upgrade` adds what's missing:
+- the hooks, merged with any of your own
+- `vault.yaml` switches
+- a Seal section, appended after your last constitution section
+- the canary note
+- updated skills, with backups of the old ones
+
+It never touches your notes, `raw/`, or the text you wrote. Use `--dry-run` to preview.
 
 Settings live in `vault.yaml`: `guards`, `lint_on_write`, `seal_every`, `codeword` (an optional fixed reply prefix, e.g. "Yes Boss!") and `honeytoken`.
 

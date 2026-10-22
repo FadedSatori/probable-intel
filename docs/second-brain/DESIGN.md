@@ -640,7 +640,7 @@ The design layers three mechanisms, cheapest and strongest first. All run as Cla
 
 **Design choices**
 
-- **Fail open.** Outside a vault, on malformed hook input, or on an internal error, the hook allows and logs to stderr. A bug in the guard must never wedge a session. The cost is that a broken `pi` install silently disables guarding, which `pi brain seal` makes visible: a session with no probes.
+- **Fail open, then check.** Outside a vault, on malformed hook input, or on an internal error, the hook allows and logs to stderr. A bug in the guard must never wedge a session. The cost is that a broken `pi` install silently disables guarding, so `pi brain doctor` runs the *real* configured PreToolUse command against a forbidden write and fails unless it is denied. The command is split into arguments, never run through a shell, and must be exactly `<pi> brain hook <event>`, since a cloned vault's settings could be hostile. `pi brain upgrade --absolute-pi` wires an absolute path for desktop launches with a different PATH, and `pi brain upgrade` brings older vaults forward without touching notes.
 - **Loop safety.** The Stop hook never blocks (it only shows a message) and ignores `stop_hook_active` re-entries.
 - **The probe is sampled, not constant.** One short line every 5 prompts; constant probing would itself keep the constitution artificially fresh and hide drift.
 - **State is disposable.** Per-session counters live in `.anamnesis/sessions/`; `pi brain seal` reports pass/miss/lookup per session.
