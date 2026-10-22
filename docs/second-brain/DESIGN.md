@@ -629,7 +629,7 @@ Method: enumerate components, list failure modes per component (network, data, r
 
 | Phase | Deliverable | Exit criterion |
 |---|---|---|
-| **P0 Skeleton** (1–2 days) | Folder layout, `constitution.md`, `facets.yaml`, `index.md`/`log.md` conventions; `qmd` as interim search; the §10.1 skill pack (capture / ingest / query / lint first) | You can capture, ingest, and query 20 real sources |
+| **P0 Skeleton** ✅ built | Folder layout, `constitution.md`, `facets.yaml`, `index.md`/`log.md` conventions; the §10.1 skill pack (capture / ingest / query / lint); `pi brain` CLI with FTS5 search (qmd optional), so P1's lexical stage already exists. See `QUICKSTART.md` | You can capture, ingest, and query 20 real sources |
 | **P1 Index** | `IndexerNode`: contextual chunking, FTS5, sqlite-vec, RRF, rerank; `anamnesis rebuild` | Personal eval harness v0 (50 Qs) running; recall@10 baseline recorded |
 | **P2 Episodic + sleep** | `InboxNode`, `EpisodeNode`, `ConsolidatorNode` with A-MEM evolution; edit-on-access lint | Nightly consolidation produces reviewed diffs; orphan rate < 10% |
 | **P3 Graph** | Bi-temporal edges in `KnowledgeGraphNode`; PPR stage; `as_of` queries | Multi-hop and temporal eval categories improve over P1 |

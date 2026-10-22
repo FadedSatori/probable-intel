@@ -1,0 +1,5 @@
+# Derived, disposable state: rebuilt by `pi brain index`. Never commit or sync it.
+.anamnesis/
+# Originals already filed into raw/ by `pi brain capture --sweep`
+inbox/.captured/
+.DS_Store
