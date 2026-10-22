@@ -49,9 +49,10 @@ probable_intel/
 │   ├── base.py                     # BaseNode — state machine, heartbeat, run loop, pause support
 │   ├── harvesters/                 # FeedNode, WebNode, ApiNode, SocialNode
 │   ├── analysts/                   # SentimentNode, EntityExtractorNode, ThreatAssessNode,
-│   │                               #   NarrativeNode (LLM-powered synthesis)
+│   │                               #   NarrativeNode (LLM-powered synthesis),
+│   │                               #   AttackMapperNode (ATT&CK keyword mapping)
 │   ├── sentinels/                  # AlertNode, AnomalyNode
-│   ├── archivists/                 # StorageNode, KnowledgeGraphNode
+│   ├── archivists/                 # StorageNode, KnowledgeGraphNode, StixExportNode
 │   ├── coordinators/               # TaskRouterNode (OODA loop)
 │   └── counterintel/               # OpSecNode, DeceptionNode, FingerprintDefenseNode,
 │                                   #   AttributionNode (passive adversary profiling)
@@ -228,10 +229,12 @@ Local providers (Ollama, vLLM) require no API key — set `base_url` in the `llm
 | Analyst | `EntityExtractorNode` | spaCy NER + LLM fallback |
 | Analyst | `ThreatAssessNode` | Rule-based threat scoring |
 | Analyst | `NarrativeNode` | LLM-powered rolling-window synthesis |
+| Analyst | `AttackMapperNode` | MITRE ATT&CK technique tagging (keyword heuristics) |
 | Sentinel | `AnomalyNode` | Rolling-baseline z-score anomaly detection |
 | Sentinel | `AlertNode` | Webhook + logfile alerting |
 | Archivist | `StorageNode` | SQLite persistence |
 | Archivist | `KnowledgeGraphNode` | Entity co-occurrence graph (NetworkX) |
+| Archivist | `StixExportNode` | STIX 2.1 bundles (report, vulnerability, attack-pattern, identity) |
 | Coordinator | `TaskRouterNode` | OODA loop — LLM-enhanced collection directives |
 | CounterIntel | `OpSecNode` | Request-pattern auditing |
 | CounterIntel | `DeceptionNode` | Honeypot endpoints + canary tokens |
@@ -246,5 +249,4 @@ Local providers (Ollama, vLLM) require no API key — set `base_url` in the `llm
 - `MonitorNode` (continuous watch over long-lived targets, distinct from AnomalyNode)
 - Semantic memory layer (vector embeddings + similarity retrieval)
 - Predictive threat modeling (time-series over KG history)
-- MITRE ATT&CK mapping + STIX 2.1 export
 - Autonomous OSINT expansion (ReconNode, DarkWebNode)

@@ -66,9 +66,9 @@ NEXUS Syntax (sugar form):
 
 Valid Node Types:
   Harvesters:   WebNode, FeedNode, SocialNode, ApiNode
-  Analysts:     SentimentNode, EntityExtractorNode, ThreatAssessNode, NarrativeNode
+  Analysts:     SentimentNode, EntityExtractorNode, ThreatAssessNode, NarrativeNode, AttackMapperNode
   Sentinels:    MonitorNode, AnomalyNode, AlertNode
-  Archivists:   StorageNode, KnowledgeGraphNode
+  Archivists:   StorageNode, KnowledgeGraphNode, StixExportNode
   Coordinators: TaskRouterNode
   CounterIntel: OpSecNode, DeceptionNode, FingerprintDefenseNode, AttributionNode
 

@@ -12,7 +12,7 @@ _LLM_ALLOWED_TYPES = {
 }
 
 # Sinks that are exempt from "orphan channel" checks (write externally)
-_SINK_NODE_TYPES = {"AlertNode", "StorageNode"}
+_SINK_NODE_TYPES = {"AlertNode", "StorageNode", "StixExportNode"}
 
 # Channel name prefixes that are intentional terminal sinks or internal-only channels
 _SINK_CHANNEL_PREFIXES = ("sink.", "system.")
