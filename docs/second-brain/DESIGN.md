@@ -521,7 +521,7 @@ Each skill follows the same contract: it reads `constitution.md` first, only wri
 
 ## 11. What to steal, from where
 
-**License check before copying code.** Depend on a library where possible; port ideas, not files, from copyleft projects. Licenses marked *verify* were not confirmed during this research.
+**License check before copying code.** Depend on a library where possible; port ideas, not files, from copyleft projects. Licenses were checked on 2026-10-22 against PyPI/npm package metadata. Those still marked *verify* publish none there, so read the repo's LICENSE file before copying.
 
 | Project | Take | How | License |
 |---|---|---|---|
@@ -530,14 +530,14 @@ Each skill follows the same contract: it reads `constitution.md` first, only wri
 | `OSU-NLP-Group/HippoRAG` | Query-to-seed linking, recognition-memory filter, PPR over entity+passage graph | Port the algorithm onto NetworkX/SQLite | verify |
 | `agiresearch/A-mem` | Note construction (keywords/tags/context) and memory-evolution prompts | Port prompts and evaluation idea | verify |
 | `KevinSRR/EMem` | Event-proposition extraction prompts | Port prompts | verify |
-| Mastra observational memory | Observation line format, token thresholds, stable-prefix caching | Port the pattern (TypeScript upstream) | verify |
-| Letta sleep-time agents | Primary agent can't edit memory; consolidator can | Architectural pattern | Apache-2.0 (verify) |
-| `asg017/sqlite-vec` | Vector KNN inside SQLite | **Dependency** | Apache-2.0 / MIT (verify) |
+| Mastra observational memory | Observation line format, token thresholds, stable-prefix caching | Port the pattern (TypeScript upstream) | Apache-2.0 (`@mastra/memory` on npm) |
+| Letta sleep-time agents | Primary agent can't edit memory; consolidator can | Architectural pattern | Apache-2.0 (PyPI `letta`) |
+| `asg017/sqlite-vec` | Vector KNN inside SQLite | **Dependency** | MIT or Apache-2.0 (PyPI `sqlite-vec`) |
 | Willison hybrid-search SQL | FTS5 + vec + RRF query | Port | Blog post |
 | Anthropic contextual retrieval cookbook | Chunk-context prompt, rerank stage | Port prompt | MIT (verify) |
-| `open-spaced-repetition/py-fsrs` | Scheduler, optimizer | **Dependency** | MIT (verify) |
-| `tobi/qmd` | Local hybrid markdown search CLI + MCP, LLM rerank | Use as an interim search backend before L3 exists | verify |
-| `basicmachines-co/basic-memory` | Markdown-as-truth + SQLite index + MCP tool surface (`write_note`, `build_context`, `recent_activity`) | **Ideas only** | AGPL-3.0 (verify) |
+| `open-spaced-repetition/py-fsrs` | Scheduler, optimizer | **Dependency** | MIT (PyPI `fsrs` 6.3.2, which implements FSRS-6 with 21 weights) |
+| `tobi/qmd` | Local hybrid markdown search CLI + MCP, LLM rerank | Optional semantic search alongside `pi brain search` | MIT (npm `@tobilu/qmd`) |
+| `basicmachines-co/basic-memory` | Markdown-as-truth + SQLite index + MCP tool surface (`write_note`, `build_context`, `recent_activity`) | **Ideas only** | AGPL-3.0-or-later (PyPI `basic-memory`) |
 | `topoteretes/cognee` | remember / recall / improve / forget API vocabulary | Ideas | Apache-2.0 |
 | Hypothesis `dom-anchor-text-quote` | Robust quote anchoring | Port selector logic to Python | BSD-2 (verify) |
 | `AgriciDaniel/claude-obsidian`, `Astro-Han/karpathy-llm-wiki` | Claude Code skill layout for an LLM wiki | Read for prompt ideas | verify |

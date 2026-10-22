@@ -90,3 +90,22 @@ def test_search_survives_punctuation_and_index_loss(vault: Vault):
     assert search(vault, "!!!") == []
     vault.index_db.unlink()
     assert build_index(vault) == 1
+
+
+def test_facets_must_come_from_vocabulary(vault: Vault):
+    write_note(vault, "concepts/f.md",
+               "id: n_f\ntype: concept\ntitle: F\n"
+               "facets: {domain: [memory-systems, agent-memory, retrieval], para: resource, mood: [x]}")
+    link_from_index(vault, "n_f")
+    msgs = [f.message for f in lint(vault) if f.rule.startswith("facet")]
+    assert any("use prefLabel 'memory-systems' instead of 'agent-memory'" in m for m in msgs)
+    assert any("'retrieval' is not in facets.yaml" in m for m in msgs)
+    assert any("facet 'mood' is not in facets.yaml" in m for m in msgs)
+    assert not any("'resource'" in m or "'memory-systems' is not" in m for m in msgs)
+
+
+def test_facets_unchecked_without_vocabulary(vault: Vault):
+    (vault.root / "facets.yaml").unlink()
+    write_note(vault, "concepts/f.md", "id: n_f\ntype: concept\ntitle: F\nfacets: {anything: [goes]}")
+    link_from_index(vault, "n_f")
+    assert lint(vault) == []

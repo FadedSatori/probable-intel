@@ -10,6 +10,8 @@ from collections import defaultdict
 from dataclasses import asdict, dataclass
 from datetime import UTC, date, datetime
 
+import yaml
+
 from .beliefs import band
 from .capture import find_raw, iter_raw
 from .logbook import iter_episodes
@@ -56,6 +58,7 @@ def lint(vault: Vault, *, inbox_max_age_days: int = 14, now: datetime | None = N
             add("error", "missing-file", required.name, "required vault file is missing")
 
     notes = load_notes(vault.wiki)
+    vocab = load_facets(vault)
     raw_items = iter_raw(vault)  # parse sidecars once
     by_key: dict[str, list[Note]] = defaultdict(list)
     ids: dict[str, list[Note]] = defaultdict(list)
@@ -101,6 +104,7 @@ def lint(vault: Vault, *, inbox_max_age_days: int = 14, now: datetime | None = N
 
         _lint_sources(vault, rel, fm, add, raw_items)
         _lint_claims(rel, fm, add)
+        _lint_facets(rel, fm, vocab, add)
 
     for n in notes:
         if n.frontmatter is None or n.error:
@@ -153,3 +157,49 @@ def _lint_claims(rel: str, fm: dict, add) -> None:  # type: ignore[no-untyped-de
         if c.get("band") and c["band"] != band(float(p)):
             add("error", "claim-band", rel,
                 f"{cid}: band {c['band']!r} does not match p={p} (should be {band(float(p))!r})")
+
+
+def load_facets(vault: Vault) -> dict[str, dict[str, str]] | None:
+    """facets.yaml → {facet: {label_key: prefLabel}} covering prefLabels and altLabels.
+
+    None when the vault has no facets.yaml (then tags are not checked).
+    """
+    path = vault.root / "facets.yaml"
+    if not path.exists():
+        return None
+    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    vocab: dict[str, dict[str, str]] = {}
+    for facet, terms in raw.items():
+        labels: dict[str, str] = {}
+        for term in terms or []:
+            pref = str(term.get("prefLabel", "")).strip() if isinstance(term, dict) else str(term)
+            if not pref:
+                continue
+            labels[link_key(pref)] = pref
+            alts = term.get("altLabel") or [] if isinstance(term, dict) else []
+            for alt in [alts] if isinstance(alts, str) else alts:
+                labels.setdefault(link_key(str(alt)), pref)
+        vocab[str(facet)] = labels
+    return vocab
+
+
+def _lint_facets(rel: str, fm: dict, vocab, add) -> None:  # type: ignore[no-untyped-def]
+    """Tags must come from facets.yaml, or folksonomy drift sets in (DESIGN.md F25)."""
+    facets = fm.get("facets")
+    if vocab is None or not facets:
+        return
+    if not isinstance(facets, dict):
+        add("error", "facet", rel, "facets must be a mapping of facet → value(s)")
+        return
+    for facet, values in facets.items():
+        if facet not in vocab:
+            add("warn", "facet-unknown", rel,
+                f"facet {facet!r} is not in facets.yaml ({', '.join(sorted(vocab))})")
+            continue
+        for value in [values] if isinstance(values, str) else values or []:
+            pref = vocab[facet].get(link_key(str(value)))
+            if pref is None:
+                add("warn", "facet-unknown", rel,
+                    f"{facet}: {value!r} is not in facets.yaml — add it there or use an existing term")
+            elif pref != str(value):
+                add("warn", "facet-alias", rel, f"{facet}: use prefLabel {pref!r} instead of {value!r}")

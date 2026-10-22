@@ -42,6 +42,7 @@ Aim for 5–20 propositions per source. Use `priority: high` for things that bea
 - **Concept and entity notes:** revise existing ones first. Add the new evidence, adjust the explanation, and add `sources:`. Create a new note only for an idea that has no home yet, and make it atomic, with a claim-like title.
 - **Links:** every note you touch should link to at least one other note. Look for one non-obvious connection as well, because those are what make the brain generative later.
 - **Claims:** add claims only for falsifiable statements worth tracking. Set `p` honestly within the tier cap: a T3 source alone can't support p above 0.65. Get `band` from `pi brain band <p>`. If the source contradicts an existing claim, don't overwrite it. Record both, lower `p` only if the evidence is at least as strong as what supports it, and tell the user.
+- **Tags:** take `facets:` values from `facets.yaml` and use the `prefLabel`, never an alias. If no existing term fits, keep the closest existing one. List the new term you would add in your report, because `facets.yaml` is the owner's vocabulary.
 - **Review prompts:** add `Q:`/`A:` pairs for the one or two ideas worth remembering without looking them up.
 - **Notes to leave alone:** skip notes with `locked: true` and notes the user wrote by hand unless the change is purely additive. Show diffs for anything larger.
 
