@@ -18,6 +18,10 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 
+from .brain import brain_app  # noqa: E402
+
+app.add_typer(brain_app, name="brain")
+
 
 def _setup_logging(level: str = "INFO") -> None:
     logging.basicConfig(

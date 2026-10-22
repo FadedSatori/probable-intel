@@ -24,6 +24,11 @@ python -m pytest tests/integration/
 ruff check .
 mypy probable_intel/
 
+# Second brain (Anamnesis) — see docs/second-brain/
+pi brain init ~/anamnesis
+pi brain --vault ~/anamnesis capture paper.pdf --tier T1 --title "Paper"
+pi brain --vault ~/anamnesis lint
+
 # CLI
 pi validate nexus/apparatuses/mvp-demo.nx
 pi run      nexus/apparatuses/mvp-demo.nx
@@ -56,7 +61,10 @@ probable_intel/
 │   └── counterintel/               # OpSecNode, DeceptionNode, FingerprintDefenseNode,
 │                                   #   AttributionNode (passive adversary profiling)
 ├── storage/        # SQLiteBackend (async, dedup via INSERT OR IGNORE)
-└── cli/            # Typer app — validate / run / status / watch
+├── anamnesis/      # Second brain (Phase 0): vault layout, capture (sha256 raw store),
+│                   #   episodes/log, structural lint, FTS5 search, belief math;
+│                   #   template/ = vault skeleton + Claude Code skill pack (copied by `pi brain init`)
+└── cli/            # Typer app — validate / run / status / watch / brain
 
 nexus/
 ├── apparatuses/    # Operator .nx files (one per mission)

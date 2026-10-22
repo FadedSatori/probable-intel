@@ -1,0 +1,26 @@
+# Faceted vocabulary (Ranganathan-style facets, SKOS-style labels).
+# Tag with prefLabel; altLabels are synonyms that search and lint map onto it.
+# Add terms freely, but add them HERE first so tags don't drift.
+
+domain:
+  - prefLabel: information-retrieval
+    altLabel: [search, ir, rag]
+  - prefLabel: memory-systems
+    altLabel: [agent-memory, llm-memory]
+  - prefLabel: cognitive-science
+    altLabel: [cogsci, learning-science]
+  - prefLabel: philosophy
+    altLabel: []
+
+form:          # what kind of thing the source is
+  - prefLabel: paper
+  - prefLabel: essay
+  - prefLabel: docs
+  - prefLabel: talk
+  - prefLabel: conversation
+
+para:          # Forte's PARA as ONE facet, not the folder tree
+  - prefLabel: project
+  - prefLabel: area
+  - prefLabel: resource
+  - prefLabel: archive
