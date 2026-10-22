@@ -163,20 +163,25 @@ Nodes can only receive packets at or below their apparatus trust level. Violatio
 | Node | Description |
 |---|---|
 | `FeedNode` | RSS/Atom ingestion with keyword filtering and dedup |
-| `WebNode` | HTTP scraping with realistic browser headers |
+| `WebNode` | Web page scraping with realistic browser headers (Playwright-capable) |
+| `ApiNode` | Authenticated JSON REST APIs (NVD, CIRCL, etc.) |
+| `SocialNode` | Reddit, HackerNews, Mastodon |
 
 ### Analysts
 
 | Node | Description |
 |---|---|
-| `SentimentNode` | VADER rule-based sentiment scoring; LLM fallback planned |
-| `EntityExtractorNode` | spaCy NER — degrades gracefully if model not installed |
+| `SentimentNode` | VADER sentiment scoring with LLM fallback |
+| `EntityExtractorNode` | spaCy NER with LLM fallback — degrades gracefully if model not installed |
 | `ThreatAssessNode` | DSL rule evaluator; emits `ThreatPacket` with severity |
+| `NarrativeNode` | LLM-powered rolling-window synthesis |
+| `AttackMapperNode` | MITRE ATT&CK technique tagging (keyword heuristics) |
 
 ### Sentinels
 
 | Node | Description |
 |---|---|
+| `AnomalyNode` | Rolling-baseline z-score anomaly detection |
 | `AlertNode` | Fires on incoming packets; sinks to logfile and/or webhook |
 
 ### Archivists
@@ -184,6 +189,14 @@ Nodes can only receive packets at or below their apparatus trust level. Violatio
 | Node | Description |
 |---|---|
 | `StorageNode` | Persists `IntelPacket`s to SQLite with dedup |
+| `KnowledgeGraphNode` | Entity co-occurrence graph (NetworkX) |
+| `StixExportNode` | STIX 2.1 bundles (report, vulnerability, attack-pattern, identity) |
+
+### Coordinators
+
+| Node | Description |
+|---|---|
+| `TaskRouterNode` | OODA loop — LLM-enhanced collection directives |
 
 ### CounterIntel
 
@@ -192,6 +205,7 @@ Nodes can only receive packets at or below their apparatus trust level. Violatio
 | `OpSecNode` | Monitors identity reuse, proxy pool health, request periodicity |
 | `DeceptionNode` | Honeypot endpoints + canary tokens; fires `DeceptionTriggerPacket` on hit |
 | `FingerprintDefenseNode` | Injects log-normal timing jitter into harvester requests |
+| `AttributionNode` | Passive adversary profiling from honeypot hits |
 
 ## Architecture
 
@@ -275,11 +289,12 @@ See `.env.example` for the full list.
 
 ## Roadmap
 
-- **LLM integration** — Claude API fallback in `SentimentNode` and `EntityExtractorNode`; daily budget cap via `LLMRouter`
-- `SocialNode` — social media collection
-- `NarrativeNode` — memetic/narrative tracking
-- `KnowledgeGraphNode` — persistent entity graph (NetworkX → Neo4j)
-- `AnomalyNode` — statistical anomaly detection over time series
-- `AttributionNode` — passive adversary profiling from `DeceptionTriggerPacket`s
+Not yet built:
+
 - Redis Spine adapter — multi-process / multi-host deployment
+- Neo4j backend for `KnowledgeGraphNode` (currently NetworkX in-memory only)
 - Textual TUI dashboard — live node status and packet stream in terminal
+- `MonitorNode` — continuous watch over long-lived targets
+- Semantic memory layer — vector embeddings + similarity retrieval
+- Predictive threat modeling — time-series over knowledge-graph history
+- Autonomous OSINT expansion (`ReconNode`, `DarkWebNode`)
