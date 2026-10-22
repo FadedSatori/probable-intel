@@ -61,6 +61,8 @@ def _sources(vault: Vault) -> list[tuple[Path, str, str, str, str]]:
         except FrontmatterError:
             fm, body = None, text
         fm = fm or {}
+        if fm.get("canary"):
+            continue  # the honeytoken stays out of search results
         out.append((path, "note", str(fm.get("id") or path.stem), str(fm.get("title") or path.stem), body))
     for item in iter_raw(vault):
         if item.path.suffix.lower() in _TEXT_EXTS and item.path.exists():

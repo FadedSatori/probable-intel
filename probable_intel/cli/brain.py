@@ -268,3 +268,72 @@ def surprise(prior: float, posterior: float) -> None:
     except ValueError as e:
         typer.echo(f"[ERROR] {e}", err=True)
         raise typer.Exit(2)
+
+
+HOOK_EVENTS = ("pre-tool", "post-tool", "prompt", "stop")
+
+
+@brain_app.command()
+def hook(
+    event_name: str = typer.Argument(..., metavar="EVENT", help="pre-tool|post-tool|prompt|stop"),
+) -> None:
+    """Claude Code hook entry point: reads the hook's JSON on stdin (see vault .claude/settings.json).
+
+    Outside a vault, or on any internal error, it allows and stays silent: a bug in the
+    guard must never wedge the session. The error goes to stderr for the debug log.
+    """
+    from ..anamnesis import guard
+
+    if event_name not in HOOK_EVENTS:
+        typer.echo(f"[ERROR] EVENT must be one of {HOOK_EVENTS}", err=True)
+        raise typer.Exit(2)
+    try:
+        event = json.loads(sys.stdin.read() or "{}")
+        try:
+            v = Vault.find(Path(event["cwd"]) if event.get("cwd") else None)
+        except VaultNotFound:
+            return
+        cfg = guard.load_config(v)
+        if event_name == "pre-tool":
+            reason = guard.pre_tool(v, event, cfg)
+            if reason:
+                _emit({"hookSpecificOutput": {"hookEventName": "PreToolUse",
+                                              "permissionDecision": "deny",
+                                              "permissionDecisionReason": f"[anamnesis] {reason}"}})
+        elif event_name == "post-tool":
+            note = guard.post_tool(v, event, cfg)
+            if note:
+                _emit({"hookSpecificOutput": {"hookEventName": "PostToolUse",
+                                              "additionalContext": note}})
+        elif event_name == "prompt":
+            note = guard.on_prompt(v, event, cfg)
+            if note:
+                _emit({"hookSpecificOutput": {"hookEventName": "UserPromptSubmit",
+                                              "additionalContext": note}})
+        else:
+            msg = guard.on_stop(v, event, cfg)
+            if msg:
+                _emit({"systemMessage": msg})
+    except Exception as e:  # noqa: BLE001 — fail open, loudly in the debug log
+        typer.echo(f"anamnesis hook {event_name} error: {e!r}", err=True)
+
+
+def _emit(payload: dict) -> None:
+    sys.stdout.write(json.dumps(payload, ensure_ascii=False))
+
+
+@brain_app.command()
+def seal(ctx: typer.Context, as_json: bool = typer.Option(False, "--json")) -> None:
+    """Seal-probe results per session: is the constitution staying in focus?"""
+    from ..anamnesis.guard import seal_report
+
+    rows = seal_report(_vault(ctx))
+    if as_json:
+        _out(rows)
+        return
+    if not rows:
+        typer.echo("no probes yet")
+    for r in rows:
+        typer.echo(f"{r['session'][:12]}  turns={r['turns']} probes={r['probes']} pass={r['passes']} "
+                   f"miss={r['misses']} lookup={r['lookups']} codeword_miss={r['codeword_misses']}  "
+                   f"recent: {' '.join(r['recent'])}")

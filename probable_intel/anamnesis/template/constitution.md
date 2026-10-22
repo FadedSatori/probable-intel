@@ -105,16 +105,20 @@ Confidence (low/moderate/high) describes the *evidence*, not the probability, an
 ## 8. Automation limits
 
 - Skills write only inside their scope: capture → `raw/` (via CLI); ingest → `wiki/`, `index.md`, `episodic/` (via CLI), `log.md` (via CLI); lint → reports only, fixes need my OK.
-- Never touch `constitution.md`, `raw/`, notes with `locked: true`.
+- Never touch `constitution.md`, `vault.yaml`, `facets.yaml`, `raw/`, `.claude/`, notes with `locked: true`.
 - Deleting a note: move it to `wiki/journal/` with a note why. Real deletion is a manual `purge`.
 - Notes marked `trust_level: classified` in frontmatter never go to a cloud model.
 
-## 9. Kill switches
+These limits are **enforced by hooks**, not just written here (`.claude/settings.json` → `pi brain hook`). A blocked write explains why; don't look for a way around it. Tell me instead.
 
-Set any of these to `off` to pause that behavior without touching data:
+## 9. Switches
 
-```yaml
-auto_ingest: on
-edit_on_access_lint: off   # Phase 2
-cloud_llm: on
-```
+Owner-only settings live in `vault.yaml`: `guards`, `lint_on_write`, `seal_every`, `codeword`, `honeytoken`. Turning a switch off pauses that behavior without touching data.
+
+## 10. Seal
+
+A memory check, not a password. Now and then a message carries a tag like `[seal 7]`. When it does, end your reply with one final line, `seal: <word 7 from this list>`, **from memory**: don't open this file to look it up. A wrong or missing seal tells me this constitution has drifted out of focus. The hook then re-injects the key rules, and a repeat means it's time for a fresh session.
+
+{{SEAL_WORDS}}
+
+Honeytoken: `wiki/journal/canary.md` holds a token that must never leave this machine. Any outbound tool call that carries it is blocked.

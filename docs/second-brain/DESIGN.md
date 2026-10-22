@@ -49,6 +49,11 @@ Status: design proposal · Date: 2026-10-22 · Target runtime: `probable-intel` 
 | F25 | Faceted classification (Ranganathan PMEST) beats single hierarchies; folksonomies drift without synonym control. | Ranganathan; ISKO | Tags are **faceted and aliased** (SKOS-style `prefLabel`/`altLabel`), not a free-for-all. |
 | F26 | Transclusion and bidirectional links (Bush → Nelson → Roam/Logseq). Web annotations anchor robustly via `TextQuoteSelector` (exact + prefix + suffix). | Nelson; W3C Web Annotation; Hypothesis fuzzy anchoring | Quotes from raw sources are stored as W3C selectors, so a highlight survives source edits and links back to the original. |
 | F27 | Local-first ideals: fast, multi-device, offline, collaborative, long-lived, private, user-owned. | Ink & Switch (2019) | Markdown + Git + SQLite file. Any sync (Git, Syncthing) works. No server required. |
+| F28 | LLMs lose ~39% performance in multi-turn vs single-turn settings, mostly from *unreliability*, not lost ability; once off track they rarely recover. | Laban et al., *LLMs Get Lost in Multi-Turn Conversation* (arXiv 2505.06120, ICLR 2026) | Long sessions need a drift detector and a remedy, not just a longer context. |
+| F29 | Persona/system-prompt adherence drifts within ~8 rounds; measured by **re-probing** the same question later and scoring consistency. | Li et al., *Measuring and Controlling Persona Drift* (arXiv 2402.10962) | The drift check is a rotating re-probe of constitution content, not a fixed phrase. |
+| F30 | Performance degrades non-uniformly with input length; content in the middle of long contexts suffers most, and recency is favored. | Chroma, *Context Rot* (2025) | A fixed code word can be copied from the model's own recent replies while the constitution (early context) fades, so it gives false passes. A miss is remedied by re-injecting the rules into recent context. |
+| F31 | Canary-word leak checks (Rebuff, Vigil) were not effective at detecting prompt leaks in an independent evaluation. | arXiv 2506.19109; LangChain Rebuff docs | Honeytoken is a cheap tripwire layered behind real enforcement, never the defense itself. |
+| F32 | CLAUDE.md is "context, not enforced configuration"; to block an action regardless of what the model decides, use a PreToolUse hook. Stop hooks get `last_assistant_message` and `stop_hook_active`. | Claude Code docs: memory, hooks | Rules that must hold are hooks (§12.6); the constitution explains them. |
 
 ### 1.2 What the research does *not* support — read before trusting a leaderboard
 
@@ -613,6 +618,39 @@ Method: enumerate components, list failure modes per component (network, data, r
 - [ ] **Index:** delete `index.db` → `anamnesis rebuild`.
 - [ ] **Bad embedding model:** revert `embed_model` in meta → re-embed.
 - [ ] **Leak or poisoning incident:** quarantine the source (set to TQ), run `anamnesis blast-radius <raw-sha>` (every claim and note downstream via provenance), review or revert.
+
+### 12.6 Tripwires: enforce, verify, probe (the code word, done properly)
+
+Origin: the *code word* trick from the active-memory plugin, where every reply starts with a phrase and a missing phrase means the model is losing track. Research (F28–F32) says the idea is right but the mechanism is weak:
+
+- **It measures copying, not memory.** The phrase appears in every recent reply, and recency is the best-preserved part of context (F30). So the model can keep producing it while the instructions it stands for have faded.
+- **Detection without a remedy just produces a warning.**
+- **Detection is the wrong first layer** for rules that must hold (F32).
+
+The design layers three mechanisms, cheapest and strongest first. All run as Claude Code hooks that call `pi brain hook <event>`, wired in the vault's `.claude/settings.json`; owner switches live in `vault.yaml`.
+
+| Layer | Hook | What it does | Guards against |
+|---|---|---|---|
+| **1. Enforce** | PreToolUse (`Write`, `Edit`, `MultiEdit`, `NotebookEdit`, `Bash`) | Denies writes to `constitution.md`, `vault.yaml`, `facets.yaml`, `raw/`, `episodic/`, `beliefs/`, `retention/`, `log.md`, `.claude/`, the canary note, and any `locked: true` note. For Bash it parses actual write targets (redirects, `rm`, `mv`, `cp` destination, `sed -i`, `tee`, `dd of=`), so reads like `cat raw/x > /tmp/y` pass. | C4 prompt injection; forgetting §8; a source disabling the hooks themselves |
+| **2. Verify** | PostToolUse (`Write`, `Edit`, `MultiEdit` on `wiki/**.md`) | Lints the note just written and returns its findings as `additionalContext`, so the model fixes them in the same turn. This is DESIGN's edit-on-access, now real. | Bad frontmatter, band/p mismatch, unanchored claims, facet drift, broken links |
+| **3. Probe** | UserPromptSubmit + Stop | Every N prompts (`seal_every`, default 5) the prompt carries `[seal k]`. The model must end its reply with `seal: <word k>` from a 12-word list that exists **only** in the constitution (§10), generated per vault at `init`. Because k rotates (never twice in a row), the answer cannot be copied from earlier turns. The Stop hook scores **pass**, **miss**, or **lookup** (the model read `constitution.md` that turn: honest, but not a memory pass). | Constitution drifting out of focus in long sessions (F28–F30) |
+| **Remedy** | UserPromptSubmit after a miss | Re-injects the key rules (§2, §3, §5, §8) into *recent* context, the region long contexts preserve best (F30), and warns you; a repeat means start a fresh session. | Turning detection into recovery |
+| **Honeytoken** | PreToolUse (`Bash`, `WebFetch`, `WebSearch`, `mcp__*`) | A canary note holds a random token. Any outbound call carrying it is denied. The note is excluded from search and lint. | Exfiltration of vault content by an injected instruction (cheap tripwire, F31) |
+| **Code word (optional)** | Stop | `codeword` in `vault.yaml` restores the original fixed-prefix check, for those who like the visible signal. Off by default. | Gross context loss |
+
+**Design choices**
+
+- **Fail open.** Outside a vault, on malformed hook input, or on an internal error, the hook allows and logs to stderr. A bug in the guard must never wedge a session. The cost is that a broken `pi` install silently disables guarding, which `pi brain seal` makes visible: a session with no probes.
+- **Loop safety.** The Stop hook never blocks (it only shows a message) and ignores `stop_hook_active` re-entries.
+- **The probe is sampled, not constant.** One short line every 5 prompts; constant probing would itself keep the constitution artificially fresh and hide drift.
+- **State is disposable.** Per-session counters live in `.anamnesis/sessions/`; `pi brain seal` reports pass/miss/lookup per session.
+
+**Verified in Claude Code 2.1.307 (headless):**
+- A shell append to `constitution.md` was blocked. The model explained the rule and proposed a diff for the owner instead of trying another route.
+- Writing a note with a wrong band and no sources produced immediate lint feedback, which the model relayed and asked about.
+- Probes `[seal 7]` and `[seal 12]` were answered correctly from memory (2/2 passes).
+
+**Not yet shown:** that probes catch real drift in *long* sessions. Both test sessions were short, where a pass is expected. The `pi brain seal` history across real use is the evidence to collect, along with the false-alarm rate.
 
 ### 12.5 Other non-failure risks
 
