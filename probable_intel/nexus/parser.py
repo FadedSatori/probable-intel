@@ -19,8 +19,9 @@ _UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
 _VALID_NODE_TYPES = {
     "WebNode", "FeedNode", "SocialNode", "ApiNode",
     "SentimentNode", "EntityExtractorNode", "ThreatAssessNode", "NarrativeNode",
+    "AttackMapperNode",
     "MonitorNode", "AnomalyNode", "AlertNode",
-    "StorageNode", "KnowledgeGraphNode",
+    "StorageNode", "KnowledgeGraphNode", "StixExportNode",
     "TaskRouterNode",
     "OpSecNode", "DeceptionNode", "FingerprintDefenseNode", "AttributionNode",
 }

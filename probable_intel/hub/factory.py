@@ -19,10 +19,12 @@ def _lazy_imports() -> dict[str, type[BaseNode]]:
     from ..nodes.analysts.entity_node import EntityExtractorNode
     from ..nodes.analysts.threat_node import ThreatAssessNode
     from ..nodes.analysts.narrative_node import NarrativeNode
+    from ..nodes.analysts.attack_node import AttackMapperNode
     from ..nodes.sentinels.alert_node import AlertNode
     from ..nodes.sentinels.anomaly_node import AnomalyNode
     from ..nodes.archivists.storage_node import StorageNode
     from ..nodes.archivists.kg_node import KnowledgeGraphNode
+    from ..nodes.archivists.stix_node import StixExportNode
     from ..nodes.coordinators.task_router import TaskRouterNode
     from ..nodes.counterintel.opsec_node import OpSecNode
     from ..nodes.counterintel.deception_node import DeceptionNode
@@ -38,10 +40,12 @@ def _lazy_imports() -> dict[str, type[BaseNode]]:
         "EntityExtractorNode": EntityExtractorNode,
         "ThreatAssessNode": ThreatAssessNode,
         "NarrativeNode": NarrativeNode,
+        "AttackMapperNode": AttackMapperNode,
         "AlertNode": AlertNode,
         "AnomalyNode": AnomalyNode,
         "StorageNode": StorageNode,
         "KnowledgeGraphNode": KnowledgeGraphNode,
+        "StixExportNode": StixExportNode,
         "TaskRouterNode": TaskRouterNode,
         "OpSecNode": OpSecNode,
         "DeceptionNode": DeceptionNode,

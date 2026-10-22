@@ -94,6 +94,24 @@ nodes:
       channel: "analysis.kg.summary"
       priority: low
 
+  - type: AttackMapperNode
+    id: "analyst.attack.security"
+    subscribe:
+      channels: ["raw.feed.security"]
+    emit:
+      channel: "analysis.attack.security"
+      priority: normal
+
+  - type: StixExportNode
+    id: "archivist.stix.security"
+    subscribe:
+      channels: ["analysis.attack.security"]
+    config:
+      export_dir: "/tmp/probable-intel-demo-stix"
+    emit:
+      channel: "sink.stix"
+      priority: low
+
   - type: AlertNode
     id: "sentinel.alert.security"
     subscribe:
