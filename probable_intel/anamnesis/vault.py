@@ -117,7 +117,18 @@ class Vault:
 
         for ledger in ("beliefs/ledger.jsonl", "retention/reviews.jsonl"):
             (root / ledger).touch(exist_ok=True)
-        return cls(root)
+
+        from .guard import ensure_canary, new_seal_words, render_seal_list
+
+        constitution = root / "constitution.md"
+        text = constitution.read_text(encoding="utf-8")
+        if "{{SEAL_WORDS}}" in text:  # freshly copied: give this vault its own seal words
+            constitution.write_text(
+                text.replace("{{SEAL_WORDS}}", render_seal_list(new_seal_words())), encoding="utf-8"
+            )
+        vault = cls(root)
+        ensure_canary(vault)
+        return vault
 
     def rel(self, path: Path) -> str:
         return path.resolve().relative_to(self.root).as_posix()

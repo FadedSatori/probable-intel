@@ -1,0 +1,22 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "^(Write|Edit|MultiEdit|NotebookEdit|Bash|WebFetch|WebSearch|mcp__.*)$",
+        "hooks": [{ "type": "command", "command": "pi brain hook pre-tool", "timeout": 15 }]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "^(Write|Edit|MultiEdit)$",
+        "hooks": [{ "type": "command", "command": "pi brain hook post-tool", "timeout": 30 }]
+      }
+    ],
+    "UserPromptSubmit": [
+      { "hooks": [{ "type": "command", "command": "pi brain hook prompt", "timeout": 15 }] }
+    ],
+    "Stop": [
+      { "hooks": [{ "type": "command", "command": "pi brain hook stop", "timeout": 15 }] }
+    ]
+  }
+}

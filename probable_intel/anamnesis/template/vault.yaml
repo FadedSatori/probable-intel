@@ -1,0 +1,8 @@
+# Owner-only switches, read by the vault's Claude Code hooks (`pi brain hook ...`).
+# Automation cannot edit this file: the write guard blocks it.
+
+guards: true          # block writes to constitution, raw/, logs, ledgers, .claude/, locked notes
+lint_on_write: true   # lint each note right after it is written and hand findings back to Claude
+seal_every: 5         # ask for a seal word every N prompts (0 = off); see constitution §10
+codeword: ""          # optional: every reply must start with this phrase, e.g. "Yes Boss!"
+honeytoken: true      # block outbound tool calls that carry the canary token

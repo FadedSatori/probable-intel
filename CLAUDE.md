@@ -63,7 +63,8 @@ probable_intel/
 │                                   #   AttributionNode (passive adversary profiling)
 ├── storage/        # SQLiteBackend (async, dedup via INSERT OR IGNORE)
 ├── anamnesis/      # Second brain (Phase 0): vault layout, capture (sha256 raw store),
-│                   #   episodes/log, structural lint, FTS5 search, belief math;
+│                   #   episodes/log, structural lint, FTS5 search, belief math,
+│                   #   guard.py (hooks: write guard, lint-on-write, seal probe, honeytoken);
 │                   #   template/ = vault skeleton + Claude Code skill pack (copied by `pi brain init`)
 └── cli/            # Typer app — validate / run / status / watch / brain
 

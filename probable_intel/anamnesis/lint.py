@@ -110,6 +110,8 @@ def lint(vault: Vault, *, inbox_max_age_days: int = 14, now: datetime | None = N
         if n.frontmatter is None or n.error:
             continue
         rel = vault.rel(n.path)
+        if n.frontmatter.get("canary"):
+            continue  # the honeytoken note is deliberately unlinked
         in_index = bool(n.keys() & root_linked)
         if not in_index:
             add("warn", "not-in-index", rel, "note is not linked from index.md")
