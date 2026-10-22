@@ -65,7 +65,7 @@ Status: design proposal · Date: 2026-10-22 · Target runtime: `probable-intel` 
 2. **Lossless below, lossy above.** Episodic events are verbatim-faithful propositions; compression happens only when writing semantic notes. (F2, F5)
 3. **Writes are asynchronous; reads are synchronous.** The thing you talk to never edits memory mid-thought; a consolidator does it in "sleep". (F3, F4)
 4. **Nothing is deleted, only superseded.** Bi-temporal everything. (F8)
-5. **Provenance caps trust.** No claim can be more trusted than its least-trusted ancestor. (F11)
+5. **Provenance caps trust.** No evidence chain is stronger than its weakest link, and no claim is more trusted than its best independent chain. (F11)
 6. **Probabilities, not adjectives.** Every factual claim has a numeric `p` and an ICD-203 band. (F19, F20)
 7. **Retrieval is a pipeline, not a call.** Lexical + semantic + graph + rerank + diversity. (F7, F9, F10)
 8. **Review ≠ search.** Resurfacing asks before it tells. (F13, F14)
@@ -114,11 +114,11 @@ Status: design proposal · Date: 2026-10-22 · Target runtime: `probable-intel` 
 | **L1 Episodic** | Event propositions + observations extracted from raw and from your own sessions | `episodic/YYYY-MM.jsonl` (append-only) | Ingest pipeline | Append-only |
 | **L2 Wiki** | Evergreen notes, entity pages, concept pages, ACH, open loops, project pages, `index.md`, `log.md` | `wiki/**/*.md` with YAML frontmatter | LLM consolidator, human edits always win | Versioned (Git) |
 | **L3 Index** | FTS5, vectors, graph, chunk contexts | `.anamnesis/index.db` (SQLite) | System | Disposable / rebuildable |
-| **L4 Beliefs** | Claims with probability, provenance, bi-temporal validity; predictions + resolutions | `beliefs` tables in `index.db` **and** mirrored in note frontmatter | Consolidator + human | Superseded, never deleted |
-| **L5 Retention** | FSRS card state for notes, inline prompts, beliefs | `retention` table | Scheduler | Updated on review |
-| **Schema** | The constitution: rubric, vocab, trust tiers, goals, lint rules | `constitution.md` (+ `facets.yaml`) | Human + LLM co-edit | Versioned |
+| **L4 Beliefs** | Claim versions with probability, evidence chains, bi-temporal validity; predictions + resolutions | `beliefs/ledger.jsonl` (append-only, one line per claim version) → projected into `claim`/`prediction` tables | Consolidator proposes, human confirms above threshold | Append-only; superseded, never deleted |
+| **L5 Retention** | Review events for notes, inline prompts, beliefs | `retention/reviews.jsonl` (append-only) → FSRS state recomputed by replay into `retention` table | Scheduler | Append-only |
+| **Schema** | The constitution: rubric, vocab, trust tiers, goals, lint rules | `constitution.md` (+ `facets.yaml`) | **Human only** (LLM may propose diffs) | Versioned |
 
-**Rule:** L3 and L5 must be fully rebuildable from L0–L2 + Git history (`anamnesis rebuild`). If the DB is lost, nothing of value is lost.
+**Rule:** every file under version control is the truth; `index.db` is a pure projection. `anamnesis rebuild` must reproduce it bit-for-bit-equivalent from L0–L2 + `beliefs/ledger.jsonl` + `retention/reviews.jsonl`. If the DB is lost, nothing of value is lost. Note frontmatter shows only the **current** version of each claim (`claim_id` + `p`); history lives in the ledger, so there is exactly one writer per fact.
 
 ### 3.2 Why this shape (cross-domain synthesis)
 
@@ -199,16 +199,14 @@ aliases: [PPR retrieval, hippocampal indexing]
 created: 2026-10-22
 updated: 2026-10-22
 sources: [raw:3fa9c1, raw:9be210]
-claims:
+claims:                          # projection of the CURRENT version only; history is in beliefs/ledger.jsonl
   - id: c_hipporag2_assoc_gain
     text: HippoRAG 2 improves associative-memory tasks ~7 points over a SOTA embedding baseline.
     p: 0.80                      # probability the claim is true as stated
     band: likely                 # ICD-203 band, derived from p
     confidence: moderate         # derived from evidence quality, never hand-typed
-    trust_cap: T2                # min trust over provenance chain
-    valid_from: 2025-02-20
-    tx_from: 2026-10-22
-    superseded_by: null
+    cap: T2                      # best independent evidence chain (§6.1)
+stakes: normal                   # high → band changes need human confirmation
 retention: {fsrs: true}          # include this note in resurfacing
 ---
 
@@ -244,7 +242,7 @@ CREATE TABLE edge (
 -- belief ledger (bi-temporal, append-only)
 CREATE TABLE claim (
   id TEXT, version INT, text TEXT, p REAL CHECK(p BETWEEN 0 AND 1),
-  trust_cap TEXT, evidence JSON,            -- [{source, supports: true|false, diagnosticity}]
+  cap TEXT, evidence JSON,                  -- [{source, supports: true|false, diagnosticity}]
   valid_from TEXT, valid_to TEXT, tx_from TEXT NOT NULL, tx_to TEXT,
   superseded_by TEXT, PRIMARY KEY (id, version)
 );
@@ -279,19 +277,27 @@ Adapted from NATO/Admiralty source grading, reduced to what a person can apply q
 ```python
 TIER_CAP = {"T0": 1.0, "T1": 0.95, "T2": 0.85, "T3": 0.65, "TQ": 0.5}
 
-def trust_cap(provenance_chain: list[str]) -> float:
-    """A claim is never more trusted than its least-trusted ancestor (F11)."""
-    return min(TIER_CAP[t] for t in provenance_chain)
+def chain_cap(chain: list[str]) -> float:
+    """One evidence chain (source → excerpt → episode → claim) is only as strong as its weakest link (F11)."""
+    return min(TIER_CAP[t] for t in chain)
 
-def capped_update(p_prior: float, p_proposed: float, chain: list[str]) -> float:
+def claim_cap(chains: list[list[str]]) -> float:
+    """A claim is capped by its BEST independent chain, so adding weak evidence never lowers the cap."""
+    return max((chain_cap(c) for c in chains), default=TIER_CAP["TQ"])
+
+def capped_update(p_prior: float, p_proposed: float, chains: list[list[str]]) -> float:
     """Evidence may lower belief freely, but may only raise it up to the provenance cap."""
-    cap = trust_cap(chain)
     if p_proposed <= p_prior:
         return p_proposed
-    return min(p_proposed, max(p_prior, cap))
+    return min(p_proposed, max(p_prior, claim_cap(chains)))
 ```
 
-Asymmetry is deliberate: a poisoned source can make you *doubt* (recoverable) but cannot make you *believe* (dangerous).
+Asymmetry is deliberate: a poisoned source can make you *doubt* (recoverable) but cannot make you *believe* (dangerous). Two refinements keep the asymmetry from becoming an attack surface:
+
+- **Downward moves from T3/TQ evidence are proposals, not writes.** A flood of low-tier contradicting sources opens an ACH stub and queues the claim for review; it does not silently drop `p`. (Otherwise "make you doubt" becomes "make you forget".)
+- **Independence is checked, not assumed.** Chains that share an upstream (same wire story, same vendor post) collapse to one chain before `claim_cap` and before confidence is computed.
+
+**Who sets `p`.** An LLM's stated probabilities are not calibrated. The consolidator *proposes* `p`; claims that cross a band boundary, or touch a note marked `stakes: high`, need human confirmation. The LLM's proposals are Brier-scored separately from yours (§6.5), so you learn how far to trust its numbers.
 
 ### 6.2 Estimative language (ICD 203)
 
@@ -486,6 +492,33 @@ Note the validator rule "LLM backend on non-analyst nodes → error": `EpisodeNo
 
 ---
 
+### 10.1 Operating interface: a skill pack
+
+Phase 0 runs entirely as Claude Code skills, before any new node exists. Skills are the right unit: each is a named, versioned procedure that loads only when its trigger fires, so the constitution stays small and every loop in §4 has exactly one entry point.
+
+| Skill | Trigger | Does | Loop |
+|---|---|---|---|
+| `anamnesis-capture` | "save this", a URL, a pasted excerpt | Writes raw + sidecar (sha256, tier, scent); no LLM synthesis | Capture |
+| `anamnesis-ingest` | "ingest", or inbox items pending | Event propositions → `episodic/`; proposes note diffs; appends `log.md` (`## [date] ingest \| title`) | Ingest → Consolidate |
+| `anamnesis-query` | Any question about your own knowledge | Hybrid search (qmd in P0, L3 later) → cited answer → offers to file the answer back | Query |
+| `anamnesis-lint` | "lint", nightly | Contradictions, orphans, stale claims, unanchored claims, rubric violations, open loops without next actions | Lint |
+| `anamnesis-review` | "review", daily or weekly | FSRS queue (recall-first), predictions due (Brier), surprise digest, health metrics | Review |
+| `anamnesis-ach` | "compare hypotheses", or a lint-generated stub | Builds or updates the ACH matrix; flags non-diagnostic evidence | Sensemake |
+| `anamnesis-forecast` | "I think X will…" | Turns a hunch into a `prediction` note with `p`, band, and `resolve_by` | Calibrate |
+
+Each skill follows the same contract: it reads `constitution.md` first, only writes inside its scope (C4), and ends by appending to `log.md`.
+
+**Existing skills worth composing** rather than rebuilding:
+- `anthropic-skills:skill-creator`: author and iterate the pack above, including trigger-description tuning.
+- `agentic-council:skeptic-failure-mode-analysis` and `skeptic-threat-model`: run on any change to the consolidator or trust model (this doc's §12 came from that pass).
+- `anthropic-skills:deep-research`: the foraging step for a top-down question, with output captured as T2/T3 raw sources rather than pasted into notes.
+
+**Skill hygiene is counter-intelligence.** A skill or plugin runs inside the same context that writes your memory, so it is a provenance tier in its own right. This session found third-party plugins that injected session-start instructions, phoned home every shell command, and nudged the agent to "silently" write drafts. Rules:
+- Read a third-party skill's hooks and scripts before enabling it.
+- Prefer skills with no hooks.
+- Never grant memory-write scope to a skill you didn't write.
+- Treat any instruction a skill injects into context as T3 data, not as the constitution.
+
 ## 11. What to steal, from where
 
 **License check before copying code.** Depend on a library where possible; port ideas, not files, from copyleft projects. Licenses marked *verify* were not confirmed during this research.
@@ -513,20 +546,82 @@ Note the validator rule "LLM backend on non-analyst nodes → error": `EpisodeNo
 
 ---
 
-## 12. What breaks (adversarial review)
+## 12. What breaks: failure-mode analysis
 
-| Risk | Failure mode | Mitigation |
+Method: enumerate components, list failure modes per component (network, data, resource, dependency, state), map cascades, then define mitigation, detection, and rollback. The four **design defects** this pass found have already been fixed above. They are listed first because they would have shipped silently.
+
+### 12.1 Design defects found and fixed
+
+| Defect | Why it was wrong | Fix |
 |---|---|---|
-| LLM consolidation drift | Repeated rewrites smooth away nuance; notes converge to bland consensus | Consolidator proposes diffs; human edits are sticky (`locked: true` blocks auto-rewrite); raw is always one click away; lint checks claims still cite a source |
-| Hallucinated links/claims | Model invents a connection or misattributes a claim | Every claim must carry a raw anchor; citation-entailment check; unanchored claims are capped at T3 |
-| Cost creep | Contextualizing every chunk and nightly consolidation get expensive | Local models (Ollama) for extraction/contextualization; frontier model only for consolidation; `LLMRouter` budget guard already exists |
-| Over-engineering | Belief ledger and ACH become chores | Everything above L2 is optional per note; default flow is capture → auto-consolidate → review. *Wu wei*: no field is mandatory for a human |
-| Collector's fallacy, automated | Automated harvesters make hoarding effortless | Inbox expiry, scent floor, capture→distill ratio visible on the dashboard |
-| Poisoning via fetched content | Agent-fetched page asserts falsehoods or injects instructions | TQ quarantine; provenance caps; content in raw is *data* never instructions; consolidator prompts treat source text as untrusted |
-| Lock-in | Tooling dies | Markdown + YAML + Git; the DB is disposable |
-| Privacy | Personal corpus sent to cloud LLMs | Per-facet routing: `trust_level: classified` notes are only ever processed by local providers (reuse `trust_level` + `LLMRouter`) |
-| Benchmark theater | Optimizing for public leaderboards | Only the personal eval harness gates changes (§9) |
-| Secondary-source numbers in this doc | Several figures come from vendor pages or summaries | Marked inline; re-verify against primaries before quoting them elsewhere |
+| `trust_cap = min` over **all** evidence | One quarantined source would cap a claim backed by a T1 paper at 0.5, which handed attackers a downgrade primitive | Cap per chain = min; claim cap = **max over independent chains**; low-tier downgrades become review proposals (§6.1) |
+| Belief and review history lived only in `index.db`, which was declared disposable | `rebuild` would have silently destroyed the history that makes "what did I believe in March" and FSRS work | Append-only `beliefs/ledger.jsonl` and `retention/reviews.jsonl` are the truth; the DB is a projection (§3.1) |
+| Claims stored in both frontmatter and the DB with no single writer | Divergence was guaranteed after the first manual edit | Frontmatter = current-version projection; ledger = history; one writer (§5.3) |
+| Consolidator reads untrusted text **and** can write anywhere | A prompt injection in a clipped page could rewrite `constitution.md`, i.e. the system's own rules | Constitution is human-only; consolidator write scope = `wiki/` + ledger proposals; source text is passed as quoted data (§12.2, C4) |
+
+### 12.2 Failure-mode table
+
+| # | Component | Failure mode | Sev. | Cascade | Mitigation | Detection signal |
+|---|---|---|---|---|---|---|
+| C1 | Capture | LLM/provider down, budget exhausted | High | Episodes and consolidation stall | **Capture never calls an LLM.** Raw + sidecar + FTS are written synchronously; LLM stages are queued with backoff + jitter (reuse `BaseNode` backoff and `LLMRouter` budget guard) | Queue depth; `episodes_pending > N` for 24h |
+| C2 | Capture | Duplicate / near-duplicate sources | Low | Inflated corroboration | sha256 dedup (`INSERT OR IGNORE`, existing); near-dup via MinHash on normalized text; dup chains collapse before `claim_cap` | Dup rate per channel |
+| C3 | Raw store | Disk full; Git bloat from PDFs/audio | Med | Commits fail → wiki edits lost | Raw binaries outside Git (Git LFS, or plain dir + `raw/MANIFEST.sha256` in Git); prune derived caches first | Free-space alert at 10%; repo size |
+| C4 | Consolidator | **Prompt injection** from source text | Critical | Corrupted notes, poisoned beliefs, rewritten rules | Write scope limited to `wiki/` + ledger proposals; constitution human-only; source text wrapped as data; TQ sources may not create new notes, only attach as evidence; diffs over N lines or touching `stakes: high` notes require approval | Diff-size histogram; lint rule "claim without anchor"; canary note that must never change |
+| C5 | Consolidator | Concurrent edit with you in Obsidian | High | Lost human edits | Optimistic concurrency: consolidator records each target file's hash at read, writes only if unchanged, otherwise re-plans next cycle. Human edits always win; `locked: true` opts a note out entirely | Conflict-retry counter |
+| C6 | Consolidator | Drift / homogenization over many rewrites | Med | Nuance lost; false consensus | Proposes diffs, not rewrites; each sentence keeps its anchor; periodic "diff vs. raw" spot check by the linter | % notes whose claims all still resolve to raw anchors |
+| C7 | Consolidator | Hallucinated links / misattributed claims | High | Beliefs from nothing | Citation-entailment check; unanchored claims capped at T3 and flagged | Entailment-failure rate |
+| C8 | LLM-set probabilities | Uncalibrated `p` | High | Surprise ranking and digest become noise | Human confirmation at band crossings; separate Brier score for LLM proposals; surprise counted only for claims with cap ≥ T2 | LLM-vs-human Brier gap |
+| C9 | Index | Embedding model changed (dimension or semantics) | Med | Vector search returns garbage | `meta` table stores `embed_model` + dim; mismatch blocks vector stage and triggers background re-embed; FTS keeps working | Model-id mismatch check at startup |
+| C10 | Index | `index.db` corrupt, or synced across devices | Med | Search down | **Never sync the DB**; each device rebuilds locally; `PRAGMA integrity_check` on start → auto-rebuild | Integrity check result |
+| C11 | Retrieval | PPR latency on a large graph | Low | Slow answers | PPR on a subgraph (k-hop around seeds); cache per seed set; skip stage 3 when latency budget exceeded | p95 query latency per stage |
+| C12 | Retrieval | Graph stage hurts single-hop factual recall | Med | Worse answers than plain RAG | Graph results are **fused**, never substituted; eval gate on the single-hop category | Per-category recall in eval harness |
+| C13 | Edit-on-access lint | Read amplification / feedback loop (linter reads → triggers lint) | Med | Runaway LLM cost | On-access lint is queued, deduped per note per 24h, and the linter's own reads never enqueue | Lint jobs/day vs. notes read/day |
+| C14 | Belief ledger | Low-tier flood pushes beliefs down ("make you forget") | High | Good beliefs eroded | Downgrades from T3/TQ are proposals → ACH stub + review queue | Pending downgrade proposals |
+| C15 | Belief ledger | Clock skew / time-zone errors in bi-temporal fields | Low | Wrong "as of" answers | Store UTC ISO-8601 only; valid-time may be a date or interval with explicit precision | Lint: valid_from > tx_from + slack |
+| C16 | Retention | Review backlog explodes after time away | Med | User abandons review | Daily cap; FSRS ranks by lowest retrievability × note importance; "vacation mode" shifts due dates | Overdue count; days since last review |
+| C17 | Inbox | Automated harvesters → hoarding | Med | Signal drowned | Scent floor + expiry; capture→distill ratio on the dashboard | Ratio < 0.3 for 2 weeks |
+| C18 | Privacy | Sensitive notes sent to a cloud LLM | Critical | Data leaves the machine | Per-note `trust_level`; `classified`+ routes only to local providers (enforced in `LLMRouter`, not by convention) | Router audit log: cloud calls carrying classified IDs (must be 0) |
+| C19 | Privacy | Need to truly delete something (append-only + Git history) | Med | Can't forget | `purge` op: tombstone in ledger + `git filter-repo` on the path + rebuild; for routinely sensitive material, encrypt per-note and shred the key | Purge log |
+| C20 | Tooling | Obsidian/plugin/skill format changes | Low | Client breaks | Plain Markdown + YAML only; no plugin-specific syntax in core fields | Round-trip test Markdown → index → Markdown |
+
+### 12.3 Cascade diagram
+
+```
+[LLM provider down / budget exhausted]
+  ├── Capture (raw + FTS)        — unaffected (no LLM on the hot path)
+  ├── Lexical search             — unaffected
+  ├── Episodes / contextual chunks / embeddings — queued (degraded freshness)
+  ├── Consolidation / lint       — paused; backlog grows
+  │   └── Surprise digest        — stale, labelled with last-run time
+  └── Review (FSRS)              — unaffected (local, deterministic)
+
+[index.db lost or corrupt]
+  ├── Search (all stages)        — down until rebuild
+  └── Truth (raw, wiki, ledger, reviews) — unaffected → `anamnesis rebuild`
+
+[Poisoned source ingested]
+  ├── New notes                  — blocked if TQ; T3 notes flagged "unanchored/low tier"
+  ├── Belief increases           — capped by best independent chain
+  ├── Belief decreases           — held as proposals → ACH + review
+  └── Constitution               — unreachable (human-only write)
+```
+
+### 12.4 Rollback checklist
+
+- [ ] **Kill switches** in `constitution.md`: `consolidation: off`, `edit_on_access: off`, `cloud_llm: off`. Each disables one loop without touching data.
+- [ ] **Undo a consolidation run:** each run is one Git commit tagged `consolidate/<run-id>` → `git revert` it; the ledger lines for that run carry `run_id` and get a compensating `superseded_by: revert/<run-id>` entry.
+- [ ] **Index:** delete `index.db` → `anamnesis rebuild`.
+- [ ] **Bad embedding model:** revert `embed_model` in meta → re-embed.
+- [ ] **Leak or poisoning incident:** quarantine the source (set to TQ), run `anamnesis blast-radius <raw-sha>` (every claim and note downstream via provenance), review or revert.
+
+### 12.5 Other non-failure risks
+
+| Risk | Mitigation |
+|---|---|
+| Over-engineering | Everything above L2 is optional per note; default flow is capture → auto-consolidate → review. *Wu wei*: no field is mandatory for a human |
+| Benchmark theater | Only the personal eval harness (§9) gates changes |
+| Secondary-source numbers in this doc | Marked inline; re-verify against primaries before quoting them elsewhere |
+| Lock-in | Markdown + YAML + JSONL + Git; the DB is disposable |
 
 ---
 
@@ -534,7 +629,7 @@ Note the validator rule "LLM backend on non-analyst nodes → error": `EpisodeNo
 
 | Phase | Deliverable | Exit criterion |
 |---|---|---|
-| **P0 Skeleton** (1–2 days) | Folder layout, `constitution.md`, `facets.yaml`, `index.md`/`log.md` conventions; `qmd` as interim search; Claude Code skill implementing Karpathy ingest/query/lint by hand | You can capture, ingest, and query 20 real sources |
+| **P0 Skeleton** (1–2 days) | Folder layout, `constitution.md`, `facets.yaml`, `index.md`/`log.md` conventions; `qmd` as interim search; the §10.1 skill pack (capture / ingest / query / lint first) | You can capture, ingest, and query 20 real sources |
 | **P1 Index** | `IndexerNode`: contextual chunking, FTS5, sqlite-vec, RRF, rerank; `anamnesis rebuild` | Personal eval harness v0 (50 Qs) running; recall@10 baseline recorded |
 | **P2 Episodic + sleep** | `InboxNode`, `EpisodeNode`, `ConsolidatorNode` with A-MEM evolution; edit-on-access lint | Nightly consolidation produces reviewed diffs; orphan rate < 10% |
 | **P3 Graph** | Bi-temporal edges in `KnowledgeGraphNode`; PPR stage; `as_of` queries | Multi-hop and temporal eval categories improve over P1 |
