@@ -36,6 +36,16 @@ _DIRS = (
 )
 
 
+def template_files() -> dict[str, Path]:
+    """Vault-relative path (dot-names restored) → bundled template file."""
+    out: dict[str, Path] = {}
+    for src in sorted(TEMPLATE_DIR.rglob("*")):
+        parts = src.relative_to(TEMPLATE_DIR).parts
+        if src.is_file() and src.suffix != ".pyc" and "__pycache__" not in parts:
+            out["/".join(_DOT_RENAMES.get(p, p) for p in parts)] = src
+    return out
+
+
 class VaultNotFound(Exception):
     """No vault (a directory containing constitution.md) at or above the given path."""
 
@@ -105,11 +115,8 @@ class Vault:
         for rel in _DIRS:
             (root / rel).mkdir(parents=True, exist_ok=True)
 
-        for src in sorted(TEMPLATE_DIR.rglob("*")):
-            if src.is_dir() or src.name == "__pycache__" or src.suffix == ".pyc":
-                continue
-            rel_parts = [_DOT_RENAMES.get(p, p) for p in src.relative_to(TEMPLATE_DIR).parts]
-            dst = root.joinpath(*rel_parts)
+        for rel, src in template_files().items():
+            dst = root / rel
             if dst.exists() and not force:
                 continue
             dst.parent.mkdir(parents=True, exist_ok=True)

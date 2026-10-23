@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -18,7 +19,8 @@ from pathlib import Path
 import yaml
 
 from . import guard
-from .vault import _DOT_RENAMES, TEMPLATE_DIR, Vault
+from .notes import FrontmatterError, split_frontmatter
+from .vault import TEMPLATE_DIR, Vault, template_files
 
 HOOK_EVENTS: dict[str, str] = {  # Claude Code event → `pi brain hook` argument
     "PreToolUse": "pre-tool",
@@ -34,15 +36,6 @@ _OWNED_PREFIX = ".claude/skills/anamnesis-"
 class Action:
     path: str
     what: str
-
-
-def _template_files() -> dict[str, Path]:
-    out = {}
-    for src in sorted(TEMPLATE_DIR.rglob("*")):
-        if src.is_file() and src.suffix != ".pyc" and "__pycache__" not in src.parts:
-            parts = [_DOT_RENAMES.get(p, p) for p in src.relative_to(TEMPLATE_DIR).parts]
-            out["/".join(parts)] = src
-    return out
 
 
 def _template_settings(hook_command: str) -> dict:
@@ -91,12 +84,12 @@ def upgrade(vault: Vault, *, dry_run: bool = False, hook_command: str | None = N
     stamp = datetime.now(UTC).strftime("%Y%m%d%H%M%S")
 
     def write(path: Path, text: str, what: str) -> None:
-        actions.append(Action(vault.rel(path) if path.exists() else str(path.relative_to(vault.root)), what))
+        actions.append(Action(path.relative_to(vault.root).as_posix(), what))
         if not dry_run:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(text, encoding="utf-8")
 
-    for rel, src in _template_files().items():
+    for rel, src in template_files().items():
         dst = vault.root / rel
         if rel == ".claude/settings.json":
             continue  # merged below
@@ -148,7 +141,10 @@ def upgrade(vault: Vault, *, dry_run: bool = False, hook_command: str | None = N
         numbers = [int(n) for n in re.findall(r"^##\s+(\d+)\.", text, re.MULTILINE)]
         n = max(numbers, default=0) + 1
         tmpl = (TEMPLATE_DIR / "constitution.md").read_text(encoding="utf-8")
-        section = tmpl[tmpl.index("## 10. Seal"):].replace("## 10. Seal", f"## {n}. Seal", 1)
+        heading = guard.SEAL_HEADING.search(tmpl)
+        if heading is None:
+            raise RuntimeError("bundled constitution template has no Seal section")
+        section = guard.SEAL_HEADING.sub(f"## {n}. Seal", tmpl[heading.start():], count=1)
         section = section.replace("{{SEAL_WORDS}}", guard.render_seal_list(guard.new_seal_words()))
         write(vault.constitution, text.rstrip("\n") + "\n\n" + section,
               f"appended §{n} Seal (seal probe word list)")
@@ -222,24 +218,30 @@ def doctor(vault: Vault, *, run_hooks: bool = True) -> list[Check]:
 
     cfg_path = vault.root / "vault.yaml"
     try:
-        yaml.safe_load(cfg_path.read_text(encoding="utf-8")) if cfg_path.exists() else None
-        cfg = guard.load_config(vault)
-        off = [k for k in ("guards", "lint_on_write", "honeytoken") if not cfg[k]]
-        add("warn" if off or not cfg["seal_every"] else "ok", "switches",
-            "off: " + ", ".join(off + ([] if cfg["seal_every"] else ["seal_every"]))
-            if off or not cfg["seal_every"] else "all safeguards on")
+        if cfg_path.exists():
+            yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
     except yaml.YAMLError as e:
         add("warn", "switches", f"vault.yaml is invalid YAML, so defaults apply: {e}")
+    else:
+        cfg = guard.load_config(vault)
+        off = [k for k in ("guards", "lint_on_write", "honeytoken") if not cfg[k]]
+        if not cfg["seal_every"]:
+            off.append("seal_every")
+        add("warn" if off else "ok", "switches",
+            "off: " + ", ".join(off) if off else "all safeguards on")
 
     for name in ("capture", "ingest", "query", "lint"):
         skill = vault.root / ".claude" / "skills" / f"anamnesis-{name}" / "SKILL.md"
         try:
-            fm = yaml.safe_load(skill.read_text(encoding="utf-8").split("---")[1])
-            ok = isinstance(fm, dict) and bool(fm.get("description"))
-            add("ok" if ok else "fail", f"skill anamnesis-{name}",
-                "loads with a description" if ok else "frontmatter has no description: it will never trigger")
-        except (OSError, IndexError, yaml.YAMLError):
+            fm, _ = split_frontmatter(skill.read_text(encoding="utf-8"))
+        except (OSError, FrontmatterError):
+            fm = None
+        if fm is None:
             add("fail", f"skill anamnesis-{name}", "missing or unparseable: run `pi brain upgrade`")
+        elif fm.get("description"):
+            add("ok", f"skill anamnesis-{name}", "loads with a description")
+        else:
+            add("fail", f"skill anamnesis-{name}", "frontmatter has no description: it will never trigger")
 
     commands = _configured_commands(vault)
     missing_events = [e for e in HOOK_EVENTS if e not in commands]
@@ -278,8 +280,6 @@ def _self_test(vault: Vault, command: str) -> tuple[str, str, str]:
     The command comes from the vault's settings.json, which a cloned vault could have
     rewritten, so it is never handed to a shell and must be exactly `<pi> brain hook ...`.
     """
-    import shlex
-
     try:
         argv = shlex.split(command)
     except ValueError:

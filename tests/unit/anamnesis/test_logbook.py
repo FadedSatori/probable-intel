@@ -47,3 +47,10 @@ def test_invalid_batches_write_nothing(vault: Vault, bad):
     with pytest.raises(ValueError):
         append_episodes(vault, [{"proposition": "fine", "source": "session"}, bad])
     assert iter_episodes(vault) == []
+
+
+@pytest.mark.parametrize(("before", "gap"), [("prior entry\n", "\n"), ("prior entry\n\n", "")])
+def test_new_entry_starts_on_its_own_block(vault: Vault, before: str, gap: str):
+    vault.log_md.write_text(before, encoding="utf-8")
+    append_log(vault, "note", "after")
+    assert vault.log_md.read_text(encoding="utf-8").startswith(before + gap + "## [")

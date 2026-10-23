@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import sys
+from dataclasses import asdict
 from pathlib import Path
 
 import typer
@@ -232,7 +233,7 @@ def search(
     v = _vault(ctx)
     hits = run_search(v, query, limit=limit, kind=kind)
     if as_json:
-        _out([h.__dict__ for h in hits])
+        _out([asdict(h) for h in hits])
         return
     if not hits:
         typer.echo("no matches")
@@ -379,7 +380,7 @@ def doctor(
     checks = run_doctor(_vault(ctx), run_hooks=not no_run)
     failed = sum(c.status == "fail" for c in checks)
     if as_json:
-        _out([c.__dict__ for c in checks])
+        _out([asdict(c) for c in checks])
     else:
         mark = {"ok": "OK  ", "warn": "WARN", "fail": "FAIL"}
         for c in checks:

@@ -8,6 +8,7 @@ import json
 import re
 import secrets
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from .capture import RawItem, find_raw, iter_raw
@@ -22,16 +23,27 @@ def _utcnow() -> datetime:
     return datetime.now(UTC)
 
 
+def _needs_separator(path: Path) -> bool:
+    """True when a non-empty log does not end in a blank line, so a new entry needs one."""
+    if not path.exists():
+        return False
+    size = path.stat().st_size
+    if size == 0:
+        return False
+    with path.open("rb") as f:
+        f.seek(max(size - 2, 0))  # only the tail is needed, not the whole log
+        return f.read() != b"\n\n"
+
+
 def append_log(vault: Vault, op: str, title: str, details: str = "") -> str:
     if op not in OPS:
         raise ValueError(f"op must be one of {sorted(OPS)}")
     title = " ".join(title.split())
     entry = f"## [{_utcnow():%Y-%m-%d}] {op} | {title}"
     block = entry + ("\n\n" + details.strip() if details.strip() else "") + "\n"
+    separator = "\n" if _needs_separator(vault.log_md) else ""
     with vault.log_md.open("a", encoding="utf-8") as f:
-        if vault.log_md.stat().st_size and not vault.log_md.read_text(encoding="utf-8").endswith("\n\n"):
-            f.write("\n")
-        f.write(block)
+        f.write(separator + block)
     return entry
 
 

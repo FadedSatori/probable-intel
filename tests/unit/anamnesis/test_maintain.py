@@ -123,6 +123,14 @@ def test_doctor_flags_what_breaks_silently(vault: Vault):
     assert {c.name: c.status for c in doctor(vault, run_hooks=False)}["skill anamnesis-query"] == "fail"
 
 
+def test_doctor_reports_a_skill_without_frontmatter_as_unparseable(vault: Vault):
+    skill = vault.root / ".claude" / "skills" / "anamnesis-capture" / "SKILL.md"
+    skill.write_text("# no frontmatter at all\n", encoding="utf-8")
+    checks = {c.name: c for c in doctor(vault, run_hooks=False)}
+    assert checks["skill anamnesis-capture"].status == "fail"
+    assert "unparseable" in checks["skill anamnesis-capture"].detail
+
+
 def test_doctor_reports_missing_executable(vault: Vault):
     upgrade(vault, hook_command="/nonexistent/bin/pi")
     checks = {c.name: c for c in doctor(vault)}

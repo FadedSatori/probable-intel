@@ -33,11 +33,6 @@ def split_frontmatter(text: str) -> tuple[dict[str, Any] | None, str]:
     return data, text[m.end():]
 
 
-def render(frontmatter: dict[str, Any], body: str) -> str:
-    fm = yaml.safe_dump(frontmatter, sort_keys=False, allow_unicode=True).strip()
-    return f"---\n{fm}\n---\n\n{body.lstrip()}"
-
-
 def wikilinks(body: str) -> list[str]:
     """Link targets in a note body, ignoring code blocks and inline code."""
     stripped = _INLINE_CODE.sub("", _FENCE.sub("", body))
@@ -70,7 +65,7 @@ class Note:
     def title(self) -> str:
         return str((self.frontmatter or {}).get("title") or self.path.stem)
 
-    def keys(self) -> set[str]:
+    def link_names(self) -> set[str]:
         """Every name a wikilink may use to reach this note."""
         fm = self.frontmatter or {}
         names = {self.id, self.path.stem, self.title}

@@ -51,9 +51,13 @@ def _chunks(body: str) -> list[str]:
     return chunks or [""]
 
 
-def _sources(vault: Vault) -> list[tuple[Path, str, str, str, str]]:
-    """(path, kind, ref, title, body) for every indexable file."""
-    out = []
+def _sources(vault: Vault) -> list[tuple[Path, str, str, str, str | None]]:
+    """(path, kind, ref, title, body) for every indexable file.
+
+    A raw body is None: it is read by build_index only if the file changed, so an
+    unchanged raw store costs a stat per file, not a full read per search.
+    """
+    out: list[tuple[Path, str, str, str, str | None]] = []
     for path in sorted(vault.wiki.rglob("*.md")):
         text = path.read_text(encoding="utf-8")
         try:
@@ -66,8 +70,7 @@ def _sources(vault: Vault) -> list[tuple[Path, str, str, str, str]]:
         out.append((path, "note", str(fm.get("id") or path.stem), str(fm.get("title") or path.stem), body))
     for item in iter_raw(vault):
         if item.path.suffix.lower() in _TEXT_EXTS and item.path.exists():
-            body = item.path.read_text(encoding="utf-8", errors="replace")
-            out.append((item.path, "raw", item.ref, str(item.meta.get("title") or item.path.stem), body))
+            out.append((item.path, "raw", item.ref, str(item.meta.get("title") or item.path.stem), None))
     return out
 
 
@@ -92,6 +95,8 @@ def build_index(vault: Vault, *, full: bool = False) -> int:
             seen.add(rel)
             if rel in known and known[rel][1] == mtime:
                 continue
+            if body is None:
+                body = path.read_text(encoding="utf-8", errors="replace")
             if rel in known:
                 conn.execute("DELETE FROM chunk WHERE doc_id = ?", (known[rel][0],))
                 conn.execute("DELETE FROM doc WHERE id = ?", (known[rel][0],))

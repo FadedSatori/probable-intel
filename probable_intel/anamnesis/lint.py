@@ -7,19 +7,23 @@ this report.
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from datetime import UTC, date, datetime
 
 import yaml
 
 from .beliefs import band
-from .capture import find_raw, iter_raw
+from .capture import RawItem, find_raw, iter_raw
 from .logbook import iter_episodes
 from .notes import Note, link_key, load_notes, wikilinks
 from .vault import NOTE_TYPES, Vault
 
 # Notes that are allowed to have no inbound links.
 _ROOT_TYPES = frozenset({"moc", "journal", "loop", "prediction"})
+
+# add(severity, rule, path, message)
+Adder = Callable[[str, str, str, str], None]
 
 
 @dataclass(frozen=True)
@@ -63,7 +67,7 @@ def lint(vault: Vault, *, inbox_max_age_days: int = 14, now: datetime | None = N
     by_key: dict[str, list[Note]] = defaultdict(list)
     ids: dict[str, list[Note]] = defaultdict(list)
     for n in notes:
-        for k in n.keys():  # noqa: SIM118 — Note.keys() is not dict.keys()
+        for k in n.link_names():
             by_key[k].append(n)
         ids[n.id].append(n)
 
@@ -112,7 +116,7 @@ def lint(vault: Vault, *, inbox_max_age_days: int = 14, now: datetime | None = N
         rel = vault.rel(n.path)
         if n.frontmatter.get("canary"):
             continue  # the honeytoken note is deliberately unlinked
-        in_index = bool(n.keys() & root_linked)
+        in_index = bool(n.link_names() & root_linked)
         if not in_index:
             add("warn", "not-in-index", rel, "note is not linked from index.md")
         if inbound[n.id] == 0 and not in_index and n.frontmatter.get("type") not in _ROOT_TYPES:
@@ -137,13 +141,13 @@ def lint(vault: Vault, *, inbox_max_age_days: int = 14, now: datetime | None = N
     return sorted(out, key=lambda f: (order[f.severity], f.rule, f.path))
 
 
-def _lint_sources(vault: Vault, rel: str, fm: dict, add, raw_items) -> None:  # type: ignore[no-untyped-def]
+def _lint_sources(vault: Vault, rel: str, fm: dict, add: Adder, raw_items: list[RawItem]) -> None:
     for src in fm.get("sources") or []:
         if isinstance(src, str) and src.startswith("raw:") and find_raw(vault, src, raw_items) is None:
             add("error", "source-ref", rel, f"{src} does not resolve to a raw item")
 
 
-def _lint_claims(rel: str, fm: dict, add) -> None:  # type: ignore[no-untyped-def]
+def _lint_claims(rel: str, fm: dict, add: Adder) -> None:
     claims = fm.get("claims") or []
     if claims and not fm.get("sources"):
         add("error", "unanchored-claim", rel, "note has claims but no sources (cap these at T3)")
@@ -185,7 +189,7 @@ def load_facets(vault: Vault) -> dict[str, dict[str, str]] | None:
     return vocab
 
 
-def _lint_facets(rel: str, fm: dict, vocab, add) -> None:  # type: ignore[no-untyped-def]
+def _lint_facets(rel: str, fm: dict, vocab: dict[str, dict[str, str]] | None, add: Adder) -> None:
     """Tags must come from facets.yaml, or folksonomy drift sets in (DESIGN.md F25)."""
     facets = fm.get("facets")
     if vocab is None or not facets:
