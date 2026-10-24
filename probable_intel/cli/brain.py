@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import sys
+from dataclasses import asdict
 from pathlib import Path
 
 import typer
@@ -232,7 +233,7 @@ def search(
     v = _vault(ctx)
     hits = run_search(v, query, limit=limit, kind=kind)
     if as_json:
-        _out([h.__dict__ for h in hits])
+        _out([asdict(h) for h in hits])
         return
     if not hits:
         typer.echo("no matches")
@@ -337,3 +338,53 @@ def seal(ctx: typer.Context, as_json: bool = typer.Option(False, "--json")) -> N
         typer.echo(f"{r['session'][:12]}  turns={r['turns']} probes={r['probes']} pass={r['passes']} "
                    f"miss={r['misses']} lookup={r['lookups']} codeword_miss={r['codeword_misses']}  "
                    f"recent: {' '.join(r['recent'])}")
+
+
+@brain_app.command()
+def upgrade(
+    ctx: typer.Context,
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would change; change nothing"),
+    absolute_pi: bool = typer.Option(
+        False, "--absolute-pi", help="Wire hooks to this `pi`'s absolute path (fixes PATH issues)"
+    ),
+) -> None:
+    """Bring an existing vault up to the current release without touching notes or your text."""
+    import shutil as _shutil
+
+    from ..anamnesis.maintain import upgrade as run_upgrade
+
+    hook_cmd = None  # keep the vault's current hook executable
+    if absolute_pi:
+        found = _shutil.which("pi") or (sys.argv[0] if Path(sys.argv[0]).name == "pi" else None)
+        if not found:
+            typer.echo("[ERROR] cannot find `pi` on PATH to make absolute", err=True)
+            raise typer.Exit(2)
+        hook_cmd = str(Path(found).resolve())
+    v = _vault(ctx)
+    actions = run_upgrade(v, dry_run=dry_run, hook_command=hook_cmd)
+    prefix = "[dry-run] " if dry_run else ""
+    for a in actions:
+        typer.echo(f"{prefix}{a.path}: {a.what}")
+    typer.echo(f"\n{prefix}{len(actions)} change(s)" if actions else "already up to date")
+
+
+@brain_app.command()
+def doctor(
+    ctx: typer.Context,
+    as_json: bool = typer.Option(False, "--json"),
+    no_run: bool = typer.Option(False, "--no-run", help="Skip running the real hook command"),
+) -> None:
+    """Check the vault is wired up: files, seal list, skills, hooks, and a live hook self-test."""
+    from ..anamnesis.maintain import doctor as run_doctor
+
+    checks = run_doctor(_vault(ctx), run_hooks=not no_run)
+    failed = sum(c.status == "fail" for c in checks)
+    if as_json:
+        _out([asdict(c) for c in checks])
+    else:
+        mark = {"ok": "OK  ", "warn": "WARN", "fail": "FAIL"}
+        for c in checks:
+            typer.echo(f"{mark[c.status]} {c.name:20s} {c.detail}")
+        typer.echo(f"\n{failed} failure(s)")
+    if failed:
+        raise typer.Exit(1)

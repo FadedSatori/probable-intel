@@ -65,6 +65,7 @@ probable_intel/
 ├── anamnesis/      # Second brain (Phase 0): vault layout, capture (sha256 raw store),
 │                   #   episodes/log, structural lint, FTS5 search, belief math,
 │                   #   guard.py (hooks: write guard, lint-on-write, seal probe, honeytoken);
+│                   #   maintain.py (`pi brain upgrade` / `doctor`);
 │                   #   template/ = vault skeleton + Claude Code skill pack (copied by `pi brain init`)
 └── cli/            # Typer app — validate / run / status / watch / brain
 

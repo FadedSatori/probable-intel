@@ -22,7 +22,8 @@ import json
 import random
 import re
 import secrets
-from dataclasses import dataclass, field
+import shlex
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -171,7 +172,7 @@ def save_session(vault: Vault, session_id: str, s: Session) -> None:
     path = _session_path(vault, session_id)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(s.__dict__), encoding="utf-8")
+    tmp.write_text(json.dumps(asdict(s)), encoding="utf-8")
     tmp.replace(path)
 
 
@@ -255,8 +256,6 @@ def bash_write_targets(cmd: str) -> list[str]:
     variables and subshells can hide a target, which is why the stronger guard is
     on the Write/Edit tools; this catches the common accidental and injected cases.
     """
-    import shlex
-
     targets = [m.group(1) for m in _REDIRECT.finditer(cmd)]
     for segment in _SEGMENT_SPLIT.split(_REDIRECT_IN.sub(" ", _REDIRECT.sub(" ", cmd))):
         try:
