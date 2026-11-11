@@ -41,6 +41,7 @@ class BaseNode(ABC):
         self._last_heartbeat = 0.0
         self._stop_event = asyncio.Event()
         self._paused_until: float = 0.0  # set by Hub directive to pause this node
+        self._inbox = spine.subscribe()  # fed by no channel until setup() calls subscribe()
 
     # ── lifecycle ──────────────────────────────────────────────────────────
 
@@ -132,6 +133,18 @@ class BaseNode(ABC):
 
     async def emit(self, channel: str, packet: "IntelPacket") -> None:
         await self.spine.publish(channel, packet)
+
+    def subscribe(self) -> None:
+        """Open one inbox fed by every channel in the spec. Call from setup()."""
+        self._inbox = self.spine.subscribe(*self.spec.subscribe_channels)
+
+    def unsubscribe(self) -> None:
+        """Stop the inbox filling. Call from teardown()."""
+        self._inbox.close()
+
+    async def receive(self) -> IntelPacket:
+        """Wait for the next packet on any subscribed channel."""
+        return await self._inbox.get()
 
     def health(self) -> dict:
         return {

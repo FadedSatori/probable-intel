@@ -33,10 +33,16 @@ class Spine:
             if not sub_queue.full():
                 await sub_queue.put(packet)
 
-    def subscribe(self, channel_name: str) -> "SpineSubscription":
+    def subscribe(self, *channel_names: str) -> "SpineSubscription":
+        """Return one queue fed by every named channel.
+
+        A consumer of several channels waits in a single place. Racing one get() per
+        channel loses packets: more than one get can finish before the consumer looks.
+        """
         q: asyncio.Queue[IntelPacket] = asyncio.Queue(maxsize=5_000)
-        self._subscribers[channel_name].append(q)
-        return SpineSubscription(channel_name, q, self)
+        for name in channel_names:
+            self._subscribers[name].append(q)
+        return SpineSubscription(channel_names, q, self)
 
     def unsubscribe(self, channel_name: str, q: asyncio.Queue[IntelPacket]) -> None:
         subs = self._subscribers.get(channel_name, [])
@@ -54,11 +60,11 @@ class Spine:
 class SpineSubscription:
     def __init__(
         self,
-        channel_name: str,
+        channel_names: tuple[str, ...],
         queue: asyncio.Queue[IntelPacket],
         spine: Spine,
     ) -> None:
-        self._channel_name = channel_name
+        self._channel_names = channel_names
         self._queue = queue
         self._spine = spine
 
@@ -71,4 +77,5 @@ class SpineSubscription:
         return await self._queue.get()
 
     def close(self) -> None:
-        self._spine.unsubscribe(self._channel_name, self._queue)
+        for name in self._channel_names:
+            self._spine.unsubscribe(name, self._queue)

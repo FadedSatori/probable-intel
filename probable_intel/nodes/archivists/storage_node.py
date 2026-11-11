@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ..base import BaseNode
-from ...spine.packet import IntelPacket
 from ...storage.sqlite_backend import SQLiteBackend
 
 if TYPE_CHECKING:
@@ -23,7 +21,6 @@ class StorageNode(BaseNode):
     def __init__(self, spec: "NodeSpec", spine: "Spine") -> None:
         super().__init__(spec, spine)
         self._backend: SQLiteBackend | None = None
-        self._subscriptions = []
 
     async def setup(self) -> None:
         db_path = (
@@ -33,27 +30,15 @@ class StorageNode(BaseNode):
         )
         self._backend = SQLiteBackend(Path(db_path))
         await self._backend.open()
-        self._subscriptions = [
-            self.spine.subscribe(ch) for ch in self.spec.subscribe_channels
-        ]
+        self.subscribe()
 
     async def teardown(self) -> None:
-        for sub in self._subscriptions:
-            sub.close()
+        self.unsubscribe()
         if self._backend:
             await self._backend.close()
 
     async def run(self) -> None:
-        if not self._subscriptions:
-            await asyncio.sleep(1)
-            return
-
-        tasks = [asyncio.create_task(sub.get()) for sub in self._subscriptions]
-        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-        for t in pending:
-            t.cancel()
-
-        packet: IntelPacket = next(iter(done)).result()
+        packet = await self.receive()
         if self._backend:
             await self._backend.save(packet)
             log.debug("node %s stored packet %s", self.node_id, packet.packet_id)

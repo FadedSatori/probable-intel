@@ -26,6 +26,28 @@ async def test_publish_and_subscribe():
 
 
 @pytest.mark.asyncio
+async def test_one_subscription_covers_several_channels_in_publish_order():
+    spine = Spine()
+    sub = spine.subscribe("ch.a", "ch.b")
+    first, second = make_packet("ch.b"), make_packet("ch.a")
+    await spine.publish("ch.b", first)
+    await spine.publish("ch.a", second)
+    received = [await asyncio.wait_for(sub.get(), timeout=1.0) for _ in range(2)]
+    assert [p.packet_id for p in received] == [first.packet_id, second.packet_id]
+
+
+@pytest.mark.asyncio
+async def test_closing_a_subscription_stops_delivery_from_all_its_channels():
+    spine = Spine()
+    sub = spine.subscribe("ch.a", "ch.b")
+    sub.close()
+    await spine.publish("ch.a", make_packet("ch.a"))
+    await spine.publish("ch.b", make_packet("ch.b"))
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(sub.get(), timeout=0.05)
+
+
+@pytest.mark.asyncio
 async def test_expired_packet_dropped():
     spine = Spine()
     sub = spine.subscribe("test.channel")

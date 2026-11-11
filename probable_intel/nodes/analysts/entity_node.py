@@ -21,7 +21,6 @@ class EntityExtractorNode(BaseNode):
     def __init__(self, spec: "NodeSpec", spine: "Spine") -> None:
         super().__init__(spec, spine)
         self._nlp = None
-        self._subscriptions = []
         self._emit_channel: str = ""
         self._emit_priority: Priority = Priority.NORMAL
         self._confidence_min: float = 0.0
@@ -54,29 +53,14 @@ class EntityExtractorNode(BaseNode):
             self._emit_channel = self.spec.emit.channel
             self._emit_priority = Priority[self.spec.emit.priority.upper()]
 
-        self._subscriptions = [
-            self.spine.subscribe(ch) for ch in self.spec.subscribe_channels
-        ]
+        self.subscribe()
         self._confidence_min = self.spec.config.get("confidence_min", 0.0)
 
     async def teardown(self) -> None:
-        for sub in self._subscriptions:
-            sub.close()
+        self.unsubscribe()
 
     async def run(self) -> None:
-        if not self._subscriptions:
-            import asyncio
-            await asyncio.sleep(1)
-            return
-
-        import asyncio
-
-        tasks = [asyncio.create_task(sub.get()) for sub in self._subscriptions]
-        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-        for t in pending:
-            t.cancel()
-
-        packet: IntelPacket = next(iter(done)).result()
+        packet = await self.receive()
         await self._process(packet)
 
     async def _process(self, packet: IntelPacket) -> None:

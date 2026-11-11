@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import time
@@ -25,7 +24,6 @@ class AlertNode(BaseNode):
 
     def __init__(self, spec: "NodeSpec", spine: "Spine") -> None:
         super().__init__(spec, spine)
-        self._subscriptions = []
         self._webhook_url: str = ""
         self._log_path: Path | None = None
         self._severity_filter: set[str] = {"HIGH", "CRITICAL"}
@@ -60,27 +58,15 @@ class AlertNode(BaseNode):
         if self._webhook_url:
             self._client = httpx.AsyncClient(timeout=10)
 
-        self._subscriptions = [
-            self.spine.subscribe(ch) for ch in self.spec.subscribe_channels
-        ]
+        self.subscribe()
 
     async def teardown(self) -> None:
-        for sub in self._subscriptions:
-            sub.close()
+        self.unsubscribe()
         if self._client:
             await self._client.aclose()
 
     async def run(self) -> None:
-        if not self._subscriptions:
-            await asyncio.sleep(1)
-            return
-
-        tasks = [asyncio.create_task(sub.get()) for sub in self._subscriptions]
-        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-        for t in pending:
-            t.cancel()
-
-        packet: IntelPacket = next(iter(done)).result()
+        packet = await self.receive()
         await self._handle(packet)
 
     async def _handle(self, packet: IntelPacket) -> None:
