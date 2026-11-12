@@ -48,13 +48,13 @@ class ApparatusValidator:
                 )
 
     def _check_circular_routes(self, spec: ApparatusSpec) -> None:
-        # Build adjacency: channel → set of emitting nodes; node → subscribed channels
-        emit_map: dict[str, str] = {}  # channel → emitting node_id
+        # Build adjacency: channel → every emitting node; node → subscribed channels
+        emit_map: dict[str, list[str]] = defaultdict(list)  # channel → emitting node_ids
         sub_map: dict[str, list[str]] = defaultdict(list)  # node_id → subscribed channels
 
         for node in spec.nodes:
             if node.emits_channel:
-                emit_map[node.emits_channel] = node.node_id
+                emit_map[node.emits_channel].append(node.node_id)
             for ch in node.subscribe_channels:
                 sub_map[node.node_id].append(ch)
 
@@ -67,8 +67,7 @@ class ApparatusValidator:
                     apparatus_name=spec.name,
                 )
             for ch in sub_map.get(node_id, []):
-                upstream_node = emit_map.get(ch)
-                if upstream_node:
+                for upstream_node in emit_map.get(ch, []):
                     _dfs(upstream_node, path + [node_id])
 
         for node in spec.nodes:

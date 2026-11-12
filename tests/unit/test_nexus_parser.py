@@ -111,6 +111,75 @@ def test_validate_circular_raises():
         validator.validate(spec)
 
 
+def test_validate_circular_raises_when_the_channel_has_a_second_emitter():
+    # node-a → ch.shared → node-b → ch.loop → node-a, with node-c also emitting on ch.shared.
+    nx = """
+apparatus_name: "shared-channel-cycle"
+version: 1.0
+trust_level: unclassified
+
+nodes:
+  - type: SentimentNode
+    id: "node-a"
+    subscribe:
+      channels: ["ch.loop"]
+    emit:
+      channel: "ch.shared"
+      priority: normal
+
+  - type: ThreatAssessNode
+    id: "node-b"
+    subscribe:
+      channels: ["ch.shared"]
+    emit:
+      channel: "ch.loop"
+      priority: normal
+
+  - type: FeedNode
+    id: "node-c"
+    targets:
+      - feed: "https://example.com/feed"
+    emit:
+      channel: "ch.shared"
+      priority: normal
+"""
+    spec = NexusParser().parse(nx)
+    with pytest.raises(NEXUSError, match="circular"):
+        ApparatusValidator().validate(spec)
+
+
+def test_two_emitters_on_one_channel_are_not_a_cycle():
+    nx = """
+apparatus_name: "shared-channel"
+version: 1.0
+trust_level: unclassified
+
+nodes:
+  - type: FeedNode
+    id: "feed.a"
+    targets:
+      - feed: "https://example.com/a"
+    emit:
+      channel: "raw.shared"
+      priority: normal
+
+  - type: FeedNode
+    id: "feed.b"
+    targets:
+      - feed: "https://example.com/b"
+    emit:
+      channel: "raw.shared"
+      priority: normal
+
+  - type: StorageNode
+    id: "archivist"
+    subscribe:
+      channels: ["raw.shared"]
+"""
+    spec = NexusParser().parse(nx)
+    ApparatusValidator().validate(spec)  # should not raise
+
+
 def test_orphan_channel_warning():
     nx = """
 apparatus_name: "orphan-test"
