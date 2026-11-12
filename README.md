@@ -146,6 +146,8 @@ rules:
 
 Operators: `==  !=  >  <  >=  <=  AND  OR  NOT  contains`
 
+`NOT` binds tightest, then `AND`, then `OR`, as in SQL and Python: `a OR b AND c` means `a OR (b AND c)`. Quote a value that contains spaces, keywords or operators: `title contains "Command AND Control"`.
+
 Severity ranking: `LOW < MEDIUM < HIGH < CRITICAL`
 
 ### Trust levels
