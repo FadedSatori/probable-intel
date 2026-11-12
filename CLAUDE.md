@@ -192,6 +192,8 @@ NOT sentiment_score > 0
 ```
 
 Operators: `==  !=  >  <  >=  <=  AND  OR  NOT  contains`
+Precedence: `NOT`, then `AND`, then `OR` (`a OR b AND c` is `a OR (b AND c)`)
+Quoting: quote any value containing spaces, keywords or operators (`title contains "Command AND Control"`)
 Field access: dot-notation (`entity.type`, `threat.score`)
 
 ## Severity ranking

@@ -5,6 +5,8 @@ import logging
 import time
 from typing import TYPE_CHECKING
 
+from ..nodes.base import NodeState
+
 if TYPE_CHECKING:
     from .registry import NodeRegistry
     from .lifecycle import NodeLifecycleManager
@@ -12,6 +14,10 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 HEARTBEAT_TIMEOUT_MULTIPLIER = 3
+
+# Silence is expected in these states: stopped on purpose, or part-way through a start or stop.
+# Restarting from here would undo an operator's stop, or start a second restart over the first.
+_NOT_BEATING = frozenset({NodeState.STOPPED, NodeState.DRAINING, NodeState.INITIALIZING})
 
 
 class HealthMonitor:
@@ -39,6 +45,8 @@ class HealthMonitor:
             await asyncio.sleep(self._check_interval)
             now = time.time()
             for node in self._registry.all_nodes():
+                if node.state in _NOT_BEATING:
+                    continue
                 threshold = node.HEARTBEAT_INTERVAL * HEARTBEAT_TIMEOUT_MULTIPLIER
                 if node._last_heartbeat and (now - node._last_heartbeat) > threshold:
                     log.warning(

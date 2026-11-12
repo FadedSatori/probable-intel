@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import TYPE_CHECKING
 
@@ -24,7 +23,6 @@ class SentimentNode(BaseNode):
     def __init__(self, spec: "NodeSpec", spine: "Spine") -> None:
         super().__init__(spec, spine)
         self._analyzer = None
-        self._subscriptions = []
         self._emit_channel: str = ""
         self._emit_priority: Priority = Priority.NORMAL
         self._llm_threshold: float = 0.4
@@ -49,25 +47,13 @@ class SentimentNode(BaseNode):
             except Exception as e:
                 log.warning("node %s: LLM setup failed: %s", self.node_id, e)
 
-        self._subscriptions = [
-            self.spine.subscribe(ch) for ch in self.spec.subscribe_channels
-        ]
+        self.subscribe()
 
     async def teardown(self) -> None:
-        for sub in self._subscriptions:
-            sub.close()
+        self.unsubscribe()
 
     async def run(self) -> None:
-        if not self._subscriptions:
-            await asyncio.sleep(1)
-            return
-
-        tasks = [asyncio.create_task(sub.get()) for sub in self._subscriptions]
-        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-        for t in pending:
-            t.cancel()
-
-        packet: IntelPacket = next(iter(done)).result()
+        packet = await self.receive()
         await self._process(packet)
 
     async def _process(self, packet: IntelPacket) -> None:

@@ -29,7 +29,23 @@ def make_old_vault(vault: Vault) -> None:
     gi.write_text(gi.read_text(encoding="utf-8").replace(".anamnesis/\n", ""), encoding="utf-8")
 
 
-def test_upgrade_brings_an_old_vault_forward_without_touching_owner_text(vault: Vault):
+@pytest.fixture
+def pi_on_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Pin PATH to one directory holding a `pi`.
+
+    `doctor` resolves the hook executable through PATH, so without this the result
+    depends on whether the machine running the tests happens to have `pi` installed.
+    """
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    exe = bin_dir / "pi"
+    exe.write_text("#!/bin/sh\n", encoding="utf-8")
+    exe.chmod(0o755)
+    monkeypatch.setenv("PATH", str(bin_dir))
+    return exe
+
+
+def test_upgrade_brings_an_old_vault_forward_without_touching_owner_text(vault: Vault, pi_on_path: Path):
     make_old_vault(vault)
     note = write_note(vault, "concepts/n.md", "id: n_n\ntype: concept\ntitle: N", "my note")
     before_note = note.read_text(encoding="utf-8")

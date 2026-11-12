@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 from collections import defaultdict
@@ -38,7 +37,6 @@ class AttributionNode(BaseNode):
 
     def __init__(self, spec: "NodeSpec", spine: "Spine") -> None:
         super().__init__(spec, spine)
-        self._subscriptions: list = []
         self._emit_channel: str = ""
         self._emit_priority: Priority = Priority.HIGH
         self._session_window: float = 3600.0
@@ -68,25 +66,13 @@ class AttributionNode(BaseNode):
             self._emit_channel = self.spec.emit.channel
             self._emit_priority = Priority[self.spec.emit.priority.upper()]
 
-        self._subscriptions = [
-            self.spine.subscribe(ch) for ch in self.spec.subscribe_channels
-        ]
+        self.subscribe()
 
     async def teardown(self) -> None:
-        for sub in self._subscriptions:
-            sub.close()
+        self.unsubscribe()
 
     async def run(self) -> None:
-        if not self._subscriptions:
-            await asyncio.sleep(1)
-            return
-
-        tasks = [asyncio.create_task(sub.get()) for sub in self._subscriptions]
-        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-        for t in pending:
-            t.cancel()
-
-        packet: IntelPacket = next(iter(done)).result()
+        packet = await self.receive()
         await self._process_trigger(packet)
 
     async def _process_trigger(self, packet: IntelPacket) -> None:

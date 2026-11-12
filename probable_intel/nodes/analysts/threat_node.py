@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 import re
 from typing import TYPE_CHECKING
@@ -25,54 +24,49 @@ _SEVERITY_PRIORITY = {
 }
 
 
-def _eval_condition(condition: str, payload: dict) -> bool:
-    """Simple condition evaluator for DSL rule conditions.
+# A quoted string, or a standalone AND / OR. Quoted strings come first in the pattern so
+# that a keyword or operator inside a value is never read as syntax. A quote glued to the
+# end of a word (O'Brien) is an apostrophe, not the start of a string.
+_LOGICAL = re.compile(
+    r'''(?<!\w)"[^"]*"|(?<!\w)'[^']*'|(?<!\S)(?P<keyword>AND|OR)(?!\S)'''
+)
+_CONTAINS = re.compile(r"^(\S+)\s+contains\s+(.+)$", re.DOTALL)
+_COMPARISON = re.compile(r"^(\S+?)\s*(==|!=|>=|<=|>|<)\s*(.+)$", re.DOTALL)
 
-    Supports: field.path == value, AND, OR, NOT, contains().
-    Operates on packet payload fields accessed by dot notation.
+
+def _split(condition: str, keyword: str) -> list[str]:
+    """Split on a logical keyword, leaving quoted text alone."""
+    parts, start = [], 0
+    for m in _LOGICAL.finditer(condition):
+        if m.group("keyword") == keyword:
+            parts.append(condition[start:m.start()])
+            start = m.end()
+    parts.append(condition[start:])
+    return parts
+
+
+def _eval_condition(condition: str, payload: dict) -> bool:
+    """Evaluate a DSL rule condition against a packet payload.
+
+    Comparisons are `field.path OP value` (== != > < >= <=) and `field contains value`,
+    with fields reached by dot notation. They combine with NOT, AND and OR: NOT binds
+    tightest and OR loosest, as in SQL and Python. Quote a value that contains spaces,
+    keywords or operators.
     """
     condition = condition.strip()
 
-    # Handle AND/OR at the top level (left-to-right, no precedence)
-    for op, fn in [(" AND ", all), (" OR ", any)]:
-        if op in condition:
-            parts = condition.split(op, 1)
-            results = [_eval_condition(p, payload) for p in parts]
-            return fn(results)
+    # Split on the loosest operator first, so the tighter ones group inside each part.
+    for keyword, combine in (("OR", any), ("AND", all)):
+        parts = _split(condition, keyword)
+        if len(parts) > 1:
+            return combine(_eval_condition(p, payload) for p in parts)
 
     # Handle NOT
     if condition.startswith("NOT "):
         return not _eval_condition(condition[4:], payload)
 
-    # Handle comparison: field.path OP value
-    for op in ("==", "!=", ">=", "<=", ">", "<"):
-        if op in condition:
-            left, _, right = condition.partition(op)
-            left = left.strip()
-            right = right.strip().strip('"').strip("'")
-            field_val = _get_field(left, payload)
-            if field_val is None:
-                return False
-            try:
-                if op == "==":
-                    return str(field_val) == right
-                if op == "!=":
-                    return str(field_val) != right
-                fv = float(field_val)
-                rv = float(right)
-                if op == ">=":
-                    return fv >= rv
-                if op == "<=":
-                    return fv <= rv
-                if op == ">":
-                    return fv > rv
-                if op == "<":
-                    return fv < rv
-            except (ValueError, TypeError):
-                return False
-
     # Handle: field contains "value"
-    m = re.match(r"^(\S+)\s+contains\s+(.+)$", condition)
+    m = _CONTAINS.match(condition)
     if m:
         field_path, val_expr = m.group(1), m.group(2).strip().strip('"').strip("'")
         field_val = _get_field(field_path, payload)
@@ -81,6 +75,31 @@ def _eval_condition(condition: str, payload: dict) -> bool:
         if isinstance(field_val, list):
             return val_expr in field_val
         return val_expr in str(field_val)
+
+    # Handle comparison: field.path OP value
+    m = _COMPARISON.match(condition)
+    if m:
+        left, op, right = m.group(1), m.group(2), m.group(3).strip().strip('"').strip("'")
+        field_val = _get_field(left, payload)
+        if field_val is None:
+            return False
+        try:
+            if op == "==":
+                return str(field_val) == right
+            if op == "!=":
+                return str(field_val) != right
+            fv = float(field_val)
+            rv = float(right)
+            if op == ">=":
+                return fv >= rv
+            if op == "<=":
+                return fv <= rv
+            if op == ">":
+                return fv > rv
+            if op == "<":
+                return fv < rv
+        except (ValueError, TypeError):
+            return False
 
     return False
 
@@ -103,7 +122,6 @@ class ThreatAssessNode(BaseNode):
     def __init__(self, spec: "NodeSpec", spine: "Spine") -> None:
         super().__init__(spec, spine)
         self._rules: list[RuleSpec] = []
-        self._subscriptions = []
         self._emit_channel: str = ""
         self._emit_priority: Priority = Priority.HIGH
 
@@ -112,25 +130,13 @@ class ThreatAssessNode(BaseNode):
         if self.spec.emit:
             self._emit_channel = self.spec.emit.channel
             self._emit_priority = Priority[self.spec.emit.priority.upper()]
-        self._subscriptions = [
-            self.spine.subscribe(ch) for ch in self.spec.subscribe_channels
-        ]
+        self.subscribe()
 
     async def teardown(self) -> None:
-        for sub in self._subscriptions:
-            sub.close()
+        self.unsubscribe()
 
     async def run(self) -> None:
-        if not self._subscriptions:
-            await asyncio.sleep(1)
-            return
-
-        tasks = [asyncio.create_task(sub.get()) for sub in self._subscriptions]
-        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-        for t in pending:
-            t.cancel()
-
-        packet: IntelPacket = next(iter(done)).result()
+        packet = await self.receive()
         await self._assess(packet)
 
     async def _assess(self, packet: IntelPacket) -> None:
